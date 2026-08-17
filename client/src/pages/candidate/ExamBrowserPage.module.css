@@ -1,0 +1,400 @@
+.shell {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: #080A0E;
+  overflow: hidden;
+  user-select: none;
+}
+
+/* ── TOP BAR ── */
+.topBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 20px;
+  height: 52px;
+  background: #0E1117;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  flex-shrink: 0;
+  z-index: 10;
+}
+.topLeft { display: flex; align-items: center; gap: 14px; }
+.topLogo {
+  display: flex; align-items: center; gap: 8px;
+  font-family: var(--font-display); font-size: 16px; font-weight: 800;
+  color: #fff; letter-spacing: -0.02em;
+}
+.topLogoMark {
+  width: 26px; height: 26px;
+  background: var(--accent); border-radius: 6px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 14px; color: #000; font-weight: 900;
+}
+.topDivider { width: 1px; height: 20px; background: rgba(255,255,255,0.08); }
+.examTitle {
+  font-size: 13px; font-weight: 600; color: rgba(255,255,255,0.8);
+  max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.candidateInfo { font-size: 11px; color: rgba(255,255,255,0.3); font-family: var(--font-mono); }
+
+.topRight { display: flex; align-items: center; gap: 12px; }
+
+.timer {
+  font-family: var(--font-mono);
+  font-size: 22px; font-weight: 500;
+  color: rgba(255,255,255,0.9);
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.08);
+  padding: 6px 16px; border-radius: 8px;
+  letter-spacing: 0.05em;
+  position: relative;
+}
+.timerWarning { color: var(--amber); border-color: rgba(251,191,36,0.3); background: rgba(251,191,36,0.06); }
+.timerCritical { color: var(--red); border-color: rgba(248,113,113,0.4); background: rgba(248,113,113,0.08); }
+.timerPulse {
+  position: absolute; top: 6px; right: 6px;
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--red);
+  animation: blink 1s infinite;
+}
+
+.submitBtn {
+  padding: 7px 18px;
+  background: rgba(248,113,113,0.12);
+  border: 1px solid rgba(248,113,113,0.25);
+  color: var(--red);
+  border-radius: 8px;
+  font-family: var(--font-body);
+  font-size: 12px; font-weight: 700;
+  cursor: pointer; transition: all 0.15s;
+}
+.submitBtn:hover:not(:disabled) { background: var(--red); color: #fff; }
+.submitBtn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ── PROCTORING BAR ── */
+.procBar {
+  display: flex; align-items: center; gap: 20px;
+  padding: 6px 20px;
+  background: #0A0C10;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+  flex-shrink: 0;
+}
+.procItem {
+  display: flex; align-items: center; gap: 5px;
+  font-size: 10px; font-weight: 700; letter-spacing: 0.04em;
+}
+.procDot { width: 5px; height: 5px; border-radius: 50%; }
+.procLabel { color: rgba(255,255,255,0.25); }
+.procOk { color: var(--green); }
+.procOk .procDot { background: var(--green); box-shadow: 0 0 5px var(--green); }
+.procWarn { color: var(--amber); }
+.procWarn .procDot { background: var(--amber); }
+.procViolation { color: var(--red); }
+.procViolation .procDot { background: var(--red); box-shadow: 0 0 5px var(--red); }
+.procSpacer { flex: 1; }
+.procAutoSave {
+  font-size: 9px; font-weight: 700; letter-spacing: 0.08em;
+  color: rgba(255,255,255,0.15);
+}
+
+/* ── MAIN AREA ── */
+.mainArea {
+  display: grid;
+  grid-template-columns: 200px 1fr 180px;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ── QUESTION NAV ── */
+.qNav {
+  background: #0E1117;
+  border-right: 1px solid rgba(255,255,255,0.06);
+  padding: 16px 12px;
+  overflow-y: auto;
+}
+.qNavTitle {
+  font-size: 9px; font-weight: 700;
+  color: rgba(255,255,255,0.2);
+  letter-spacing: 0.08em; text-transform: uppercase;
+  margin-bottom: 10px;
+}
+.qGrid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 5px;
+}
+.qNum {
+  width: 30px; height: 30px;
+  border-radius: 6px; border: none;
+  font-family: var(--font-mono); font-size: 11px; font-weight: 600;
+  cursor: pointer; transition: all 0.12s;
+  display: flex; align-items: center; justify-content: center;
+}
+.qNum_unanswered { background: rgba(255,255,255,0.04); color: rgba(255,255,255,0.25); }
+.qNum_unanswered:hover { background: rgba(255,255,255,0.08); color: rgba(255,255,255,0.6); }
+.qNum_answered { background: rgba(96,165,250,0.15); color: var(--blue); }
+.qNum_current { background: var(--accent); color: #000; }
+.qNum_flagged { background: rgba(251,191,36,0.15); color: var(--amber); }
+
+.qLegend { margin-top: 16px; display: flex; flex-direction: column; gap: 5px; }
+.qLegItem { display: flex; align-items: center; gap: 6px; font-size: 10px; color: rgba(255,255,255,0.25); }
+.qLegDot { width: 7px; height: 7px; border-radius: 2px; }
+.legAnswered { background: rgba(96,165,250,0.5); }
+.legFlagged  { background: rgba(251,191,36,0.5); }
+.legUnanswered { background: rgba(255,255,255,0.1); }
+
+/* ── QUESTION BODY ── */
+.qBody {
+  padding: 28px 36px;
+  overflow-y: auto;
+  color: #fff;
+}
+.qMeta {
+  font-size: 10px; font-weight: 700;
+  color: rgba(255,255,255,0.25);
+  letter-spacing: 0.08em; text-transform: uppercase;
+  margin-bottom: 10px;
+}
+.qText {
+  font-size: 17px; font-weight: 400; line-height: 1.7;
+  color: rgba(255,255,255,0.9);
+  margin-bottom: 28px;
+  max-width: 680px;
+}
+.qOptions { display: flex; flex-direction: column; gap: 10px; max-width: 640px; }
+.qOpt {
+  display: flex; align-items: center; gap: 14px;
+  padding: 13px 16px;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.07);
+  border-radius: 10px;
+  cursor: pointer; transition: all 0.15s;
+  color: rgba(255,255,255,0.7);
+  font-size: 14px; line-height: 1.5;
+}
+.qOpt:hover {
+  background: rgba(255,255,255,0.06);
+  border-color: rgba(255,255,255,0.12);
+  color: rgba(255,255,255,0.9);
+}
+.qOptSelected {
+  background: rgba(245,166,35,0.1) !important;
+  border-color: rgba(245,166,35,0.4) !important;
+  color: #fff !important;
+}
+.qOptLetter {
+  width: 30px; height: 30px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(255,255,255,0.15);
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--font-display); font-size: 13px; font-weight: 700;
+  flex-shrink: 0; color: rgba(255,255,255,0.5);
+  transition: all 0.15s;
+}
+.qOptLetterSelected { background: var(--accent); border-color: var(--accent); color: #000; }
+.qOptText { flex: 1; }
+
+.essayInput {
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 10px;
+  color: rgba(255,255,255,0.85);
+  padding: 16px;
+  width: 100%; max-width: 680px;
+  font-size: 14px; line-height: 1.7;
+  resize: vertical;
+  user-select: text;
+}
+.essayInput:focus { border-color: rgba(245,166,35,0.4); box-shadow: 0 0 0 3px rgba(245,166,35,0.08); }
+
+.fillInput {
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 10px;
+  color: rgba(255,255,255,0.85);
+  padding: 13px 16px;
+  width: 100%; max-width: 480px;
+  font-size: 16px;
+  user-select: text;
+}
+
+.qActions {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-top: 32px; padding-top: 20px;
+  border-top: 1px solid rgba(255,255,255,0.05);
+  max-width: 640px;
+}
+.qBtnGhost {
+  padding: 8px 18px;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.08);
+  color: rgba(255,255,255,0.5);
+  border-radius: 8px; cursor: pointer;
+  font-family: var(--font-body); font-size: 13px; font-weight: 600;
+  transition: all 0.15s;
+}
+.qBtnGhost:hover:not(:disabled) { color: rgba(255,255,255,0.8); background: rgba(255,255,255,0.08); }
+.qBtnGhost:disabled { opacity: 0.3; cursor: not-allowed; }
+
+.qBtnFlag {
+  padding: 8px 16px;
+  background: transparent;
+  border: 1px solid rgba(251,191,36,0.2);
+  color: rgba(251,191,36,0.6);
+  border-radius: 8px; cursor: pointer;
+  font-family: var(--font-body); font-size: 12px; font-weight: 700;
+  transition: all 0.15s;
+}
+.qBtnFlag:hover { background: rgba(251,191,36,0.08); color: var(--amber); }
+.qBtnFlagActive { background: rgba(251,191,36,0.12); color: var(--amber); border-color: rgba(251,191,36,0.4); }
+
+.qBtnPrimary {
+  padding: 9px 22px;
+  background: var(--accent); color: #000;
+  border: none; border-radius: 8px; cursor: pointer;
+  font-family: var(--font-display); font-size: 14px; font-weight: 700;
+  transition: all 0.15s;
+}
+.qBtnPrimary:hover { background: #FFB830; }
+
+/* ── PROCTORING SIDEBAR ── */
+.qSidebar {
+  background: #0E1117;
+  border-left: 1px solid rgba(255,255,255,0.06);
+  padding: 14px;
+  overflow-y: auto;
+}
+
+.camBox {
+  background: #080A0E;
+  border-radius: 10px;
+  overflow: hidden;
+  margin-bottom: 14px;
+  position: relative;
+}
+.cam { width: 100%; display: block; }
+.camPlaceholder {
+  width: 100%; height: 110px;
+  background: linear-gradient(135deg, #0d1117, #141820);
+  display: flex; align-items: flex-end; justify-content: center;
+  position: relative; overflow: hidden;
+}
+.camFace {
+  width: 36px; height: 44px;
+  background: rgba(255,255,255,0.07);
+  border-radius: 50% 50% 30% 30%;
+  margin-bottom: 14px; position: relative;
+}
+.camFace::before {
+  content: '';
+  position: absolute; top: -22px; left: 50%;
+  transform: translateX(-50%);
+  width: 28px; height: 28px;
+  background: rgba(255,255,255,0.09);
+  border-radius: 50%;
+}
+.camScanLine {
+  position: absolute; top: 0; left: 0; right: 0;
+  height: 1.5px;
+  background: linear-gradient(90deg, transparent, rgba(52,211,153,0.6), transparent);
+  animation: scan-line 2.5s linear infinite;
+}
+.camLabel {
+  position: absolute; bottom: 5px; right: 8px;
+  font-size: 9px; font-weight: 700; letter-spacing: 0.08em;
+  color: rgba(52,211,153,0.6);
+}
+.camToggle {
+  width: 100%; padding: 5px;
+  background: rgba(255,255,255,0.03);
+  border: none; border-top: 1px solid rgba(255,255,255,0.05);
+  color: rgba(255,255,255,0.3);
+  font-family: var(--font-body); font-size: 10px; font-weight: 600;
+  cursor: pointer; transition: all 0.15s;
+}
+.camToggle:hover { color: rgba(255,255,255,0.6); background: rgba(255,255,255,0.05); }
+
+.procMetrics { display: flex; flex-direction: column; gap: 10px; margin-bottom: 14px; }
+.procMetric {}
+.procMetricTop { display: flex; justify-content: space-between; margin-bottom: 4px; }
+.procMetricLabel { font-size: 9px; font-weight: 700; color: rgba(255,255,255,0.2); letter-spacing: 0.07em; text-transform: uppercase; }
+.procMetricVal { font-family: var(--font-mono); font-size: 10px; color: rgba(255,255,255,0.45); }
+.procMetricBar { height: 3px; background: rgba(255,255,255,0.05); border-radius: 2px; overflow: hidden; }
+.procMetricFill { height: 100%; border-radius: 2px; transition: width 1s; }
+
+.sessionInfo {
+  background: rgba(255,255,255,0.02);
+  border-radius: 8px; padding: 10px;
+  border: 1px solid rgba(255,255,255,0.05);
+}
+.sessionInfoTitle { font-size: 9px; font-weight: 700; color: rgba(255,255,255,0.2); letter-spacing: 0.07em; text-transform: uppercase; margin-bottom: 8px; }
+.sessionInfoItem {
+  display: flex; justify-content: space-between;
+  font-size: 11px; padding: 3px 0;
+  color: rgba(255,255,255,0.35);
+}
+.sessionInfoItem span:last-child { color: rgba(255,255,255,0.6); font-family: var(--font-mono); font-weight: 500; }
+
+/* ── MODAL ── */
+.modal {
+  position: fixed; inset: 0; z-index: 1000;
+  background: rgba(0,0,0,0.75);
+  display: flex; align-items: center; justify-content: center;
+  backdrop-filter: blur(8px);
+}
+.modalCard {
+  background: #141820;
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 20px; padding: 32px;
+  width: 420px;
+  box-shadow: 0 24px 60px rgba(0,0,0,0.6);
+  animation: fadeIn 0.2s ease;
+}
+.modalTitle {
+  font-family: var(--font-display); font-size: 22px; font-weight: 800;
+  color: #fff; margin-bottom: 20px; letter-spacing: -0.03em;
+}
+.modalBody { display: flex; flex-direction: column; gap: 8px; margin-bottom: 20px; }
+.modalStat {
+  display: flex; justify-content: space-between;
+  font-size: 14px; padding: 8px 12px;
+  background: rgba(255,255,255,0.04);
+  border-radius: 8px; color: rgba(255,255,255,0.55);
+}
+.modalStat strong { color: rgba(255,255,255,0.9); }
+.modalWarn {
+  font-size: 13px; color: rgba(255,255,255,0.4);
+  text-align: center; margin-top: 8px; line-height: 1.5;
+}
+.modalActions { display: flex; gap: 10px; }
+.modalBtnCancel {
+  flex: 1; padding: 11px;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.1);
+  color: rgba(255,255,255,0.6);
+  border-radius: 10px; cursor: pointer;
+  font-family: var(--font-body); font-size: 13px; font-weight: 600;
+  transition: all 0.15s;
+}
+.modalBtnCancel:hover { background: rgba(255,255,255,0.1); color: #fff; }
+.modalBtnSubmit {
+  flex: 1; padding: 11px;
+  background: var(--red); color: #fff;
+  border: none; border-radius: 10px; cursor: pointer;
+  font-family: var(--font-display); font-size: 14px; font-weight: 700;
+  transition: all 0.15s;
+}
+.modalBtnSubmit:hover:not(:disabled) { background: #FF5555; }
+.modalBtnSubmit:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ── LOAD SCREEN ── */
+.loadScreen {
+  position: fixed; inset: 0;
+  background: #080A0E;
+  display: flex; align-items: center; justify-content: center;
+  z-index: 999;
+}
+.loadContent { display: flex; flex-direction: column; align-items: center; gap: 16px; }
+.loadText { font-size: 14px; color: rgba(255,255,255,0.35); font-family: var(--font-mono); }

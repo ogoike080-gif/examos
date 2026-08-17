@@ -1,0 +1,106 @@
+.page { padding: 28px 32px; animation: fadeIn 0.3s ease; max-width: 860px; }
+.header { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:20px; }
+.title { font-family:var(--font-display); font-size:24px; font-weight:800; letter-spacing:-0.03em; }
+.sub { font-size:13px; color:var(--text-secondary); margin-top:3px; }
+.loadState { display:flex; justify-content:center; padding:60px; }
+
+/* Preview banner */
+.previewBanner {
+  display:flex; align-items:stretch;
+  background:var(--bg-surface); border:2px solid;
+  border-radius:var(--r-lg); overflow:hidden; margin-bottom:24px;
+  box-shadow: var(--shadow);
+}
+.previewBannerLeft {
+  width:80px; display:flex; align-items:center; justify-content:center;
+  flex-shrink:0;
+}
+.previewLogo { width:56px; height:56px; object-fit:contain; border-radius:8px; }
+.previewLogoPlaceholder {
+  width:52px; height:52px; background:rgba(255,255,255,0.25);
+  border-radius:12px; display:flex; align-items:center; justify-content:center;
+  font-family:var(--font-display); font-size:24px; font-weight:900; color:#fff;
+}
+.previewBannerInfo { flex:1; padding:14px 18px; }
+.previewSchoolName { font-family:var(--font-display); font-size:16px; font-weight:800; color:var(--text-primary); letter-spacing:-0.02em; }
+.previewMotto { font-size:12px; color:var(--text-secondary); font-style:italic; margin-top:2px; }
+.previewAddress { font-size:11px; color:var(--text-muted); margin-top:4px; }
+.previewBannerRight { padding:14px 18px; display:flex; align-items:center; }
+.previewStamp {
+  border:2px solid; border-radius:6px; padding:6px 14px;
+  font-family:var(--font-mono); font-size:11px; font-weight:700; letter-spacing:0.08em;
+  opacity:0.7; transform:rotate(-3deg);
+}
+
+/* Tabs */
+.tabs { display:flex; gap:4px; margin-bottom:20px; border-bottom:1px solid var(--border); padding-bottom:0; }
+.tab {
+  padding:8px 18px; background:transparent; border:none;
+  border-bottom:2px solid transparent; margin-bottom:-1px;
+  font-family:var(--font-body); font-size:13px; font-weight:600;
+  color:var(--text-secondary); cursor:pointer; transition:all 0.15s;
+}
+.tab:hover { color:var(--text-primary); }
+.tabActive { color:var(--accent); }
+
+.tabContent {}
+.section { display:flex; flex-direction:column; gap:16px; }
+
+/* Fields */
+.field { display:flex; flex-direction:column; gap:6px; }
+.label { font-size:11px; font-weight:700; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.06em; }
+.hint { text-transform:none; font-weight:500; color:var(--text-muted); letter-spacing:0; }
+.grid2 { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+
+/* Toggles */
+.toggleGroup {
+  background:var(--bg-raised); border:1px solid var(--border);
+  border-radius:var(--r-lg); padding:16px; display:flex; flex-direction:column; gap:12px;
+}
+.toggleGroupTitle { font-size:11px; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.06em; margin-bottom:4px; }
+.toggle { display:flex; align-items:center; gap:12px; cursor:pointer; }
+.toggleTrack {
+  width:40px; height:22px; border-radius:11px;
+  position:relative; cursor:pointer; transition:background 0.2s; flex-shrink:0;
+}
+.toggleThumb {
+  position:absolute; top:3px; left:3px;
+  width:16px; height:16px; border-radius:50%;
+  background:#fff; transition:transform 0.2s;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+}
+.toggleThumbOn { transform:translateX(18px); }
+.toggleLabel { font-size:13px; color:var(--text-secondary); }
+
+/* Grading */
+.gradingNote {
+  font-size:13px; color:var(--text-secondary); padding:10px 14px;
+  background:var(--bg-raised); border-radius:var(--r); border:1px solid var(--border);
+}
+.gradingTable { display:flex; flex-direction:column; gap:0; background:var(--bg-surface); border:1px solid var(--border); border-radius:var(--r-lg); overflow:hidden; }
+.gradingHeader {
+  display:grid; grid-template-columns:1fr 1fr 0.7fr 1fr 2fr;
+  gap:8px; padding:10px 14px; background:var(--bg-base);
+  font-size:10px; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.06em;
+  border-bottom:1px solid var(--border);
+}
+.gradingRow {
+  display:grid; grid-template-columns:1fr 1fr 0.7fr 1fr 2fr;
+  gap:8px; padding:8px 14px; border-bottom:1px solid var(--border); align-items:center;
+}
+.gradingRow:last-child { border-bottom:none; }
+.gradingRow input { padding:5px 8px; font-size:13px; }
+.gradingPreview { font-size:12px; }
+
+.signatureNote {
+  font-size:12px; color:var(--text-muted); padding:12px 14px;
+  background:var(--amber-dim); border:1px solid rgba(251,191,36,0.2);
+  border-radius:var(--r); line-height:1.6;
+}
+
+/* Save bar */
+.saveBar {
+  margin-top:28px; padding-top:20px; border-top:1px solid var(--border);
+  display:flex; align-items:center; gap:16px;
+}
+.saveSub { font-size:12px; color:var(--text-muted); }

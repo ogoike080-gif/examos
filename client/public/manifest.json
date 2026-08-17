@@ -1,0 +1,29 @@
+{
+  "name": "ExamOS 2.0 — CBT Platform",
+  "short_name": "ExamOS",
+  "description": "AI-powered Computer Based Testing platform for Nigerian schools",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0A0A0F",
+  "theme_color": "#6366F1",
+  "orientation": "any",
+  "scope": "/",
+  "lang": "en-NG",
+  "categories": ["education", "productivity"],
+  "icons": [
+    { "src": "/favicon.ico", "sizes": "48x48", "type": "image/x-icon" }
+  ],
+  "shortcuts": [
+    {
+      "name": "My Exams",
+      "short_name": "Exams",
+      "url": "/exam"
+    },
+    {
+      "name": "Practice Free",
+      "short_name": "Practice",
+      "url": "/practice"
+    }
+  ],
+  "prefer_related_applications": false
+}

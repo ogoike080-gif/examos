@@ -1,0 +1,348 @@
+/* ── SCREEN WRAPPER ── */
+.pageWrapper {
+  min-height: 100vh;
+  background: #E8EAF0;
+  padding: 24px;
+  font-family: 'Georgia', 'Times New Roman', serif;
+}
+
+.controls {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  max-width: 820px;
+  margin: 0 auto 20px;
+}
+
+.loadScreen {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  background: #E8EAF0;
+}
+.loadText { font-size: 14px; color: #666; }
+
+/* ── THE SLIP ── */
+.slip {
+  max-width: 820px;
+  margin: 0 auto;
+  background: #FFFFFF;
+  box-shadow: 0 8px 40px rgba(0,0,0,0.18);
+  border-radius: 4px;
+  overflow: hidden;
+  position: relative;
+}
+
+/* ── HEADER ── */
+.header {
+  position: relative;
+  padding-bottom: 0;
+}
+.headerPattern {
+  position: absolute;
+  top: 0; left: 0; right: 0; height: 4px;
+  background: repeating-linear-gradient(
+    90deg,
+    rgba(255,255,255,0.4) 0px,
+    rgba(255,255,255,0.4) 20px,
+    transparent 20px,
+    transparent 40px
+  );
+}
+.headerContent {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 24px 32px 18px;
+}
+.logoArea { flex-shrink: 0; }
+.logoImg { width: 72px; height: 72px; object-fit: contain; border-radius: 8px; background: rgba(255,255,255,0.9); padding: 4px; }
+.logoPlaceholder {
+  width: 72px; height: 72px;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 32px; font-weight: 900; color: #fff;
+  font-family: 'Arial Black', sans-serif;
+  border: 3px solid rgba(255,255,255,0.4);
+}
+.schoolInfo { flex: 1; text-align: center; }
+.schoolName {
+  font-family: 'Georgia', serif;
+  font-size: 22px; font-weight: 700;
+  color: #FFFFFF;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  line-height: 1.2;
+  text-shadow: 0 1px 3px rgba(0,0,0,0.2);
+}
+.schoolMotto {
+  font-size: 12px; color: rgba(255,255,255,0.85);
+  margin-top: 4px; font-style: italic; letter-spacing: 0.03em;
+}
+.schoolContact {
+  font-size: 11px; color: rgba(255,255,255,0.7);
+  margin-top: 6px; letter-spacing: 0.02em;
+}
+.emblem { flex-shrink: 0; }
+.emblemCircle {
+  width: 72px; height: 72px;
+  border-radius: 50%;
+  border: 3px solid rgba(255,255,255,0.5);
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(255,255,255,0.15);
+}
+.emblemInner { text-align: center; }
+.emblemText {
+  font-size: 11px; font-weight: 800; color: #fff;
+  letter-spacing: 0.08em; line-height: 1.4;
+  font-family: 'Arial Black', sans-serif;
+}
+
+.titleStrip {
+  background: rgba(0,0,0,0.15);
+  padding: 6px 32px;
+  text-align: center;
+}
+.titleStripText {
+  font-size: 11px; font-weight: 700;
+  color: rgba(255,255,255,0.95);
+  letter-spacing: 0.18em;
+  font-family: 'Arial', sans-serif;
+}
+
+/* ── CANDIDATE STRIP ── */
+.candidateStrip {
+  background: #F8F9FC;
+  border-bottom: 2px solid #E0E4EE;
+  padding: 16px 32px;
+}
+.candidateGrid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px 24px;
+}
+.candidateField { display: flex; flex-direction: column; gap: 2px; }
+.fieldKey {
+  font-size: 9px; font-weight: 700;
+  color: #888; letter-spacing: 0.1em;
+  text-transform: uppercase;
+  font-family: 'Arial', sans-serif;
+}
+.fieldVal {
+  font-size: 13px; font-weight: 600; color: #1A1A2E;
+  font-family: 'Georgia', serif;
+}
+
+/* ── SCORE SECTION ── */
+.scoreSection {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 0;
+  border-bottom: 2px solid #E0E4EE;
+}
+
+.scoreCard {
+  padding: 24px 20px;
+  border-right: 1px solid #E0E4EE;
+  border-left: 4px solid;
+  text-align: center;
+  background: #FAFBFF;
+}
+.scoreLabel {
+  font-size: 9px; font-weight: 700; letter-spacing: 0.12em;
+  color: #999; margin-bottom: 8px;
+  font-family: 'Arial', sans-serif;
+}
+.scoreMain {
+  font-size: 52px; font-weight: 900; line-height: 1;
+  font-family: 'Arial Black', Georgia, sans-serif;
+  letter-spacing: -0.03em;
+}
+.scoreTotal { font-size: 22px; font-weight: 400; color: #999; }
+.scorePercent {
+  font-size: 16px; font-weight: 600; color: #555;
+  margin-top: 4px; font-family: 'Arial', sans-serif;
+}
+
+/* Bar chart */
+.chartWrap { margin-top: 14px; position: relative; }
+.chartTrack {
+  height: 10px; background: #E8EAF0;
+  border-radius: 5px; overflow: visible;
+  position: relative;
+}
+.chartFill {
+  height: 100%; border-radius: 5px;
+  transition: width 1s ease;
+}
+.chartMarker {
+  position: absolute; top: -3px;
+  width: 16px; height: 16px;
+  background: #fff; border: 3px solid currentColor;
+  border-radius: 50%; transform: translateX(-50%);
+  box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+}
+.chartLabels { position: relative; height: 16px; margin-top: 4px; }
+.chartLabel {
+  position: absolute; transform: translateX(-50%);
+  font-size: 9px; color: #aaa;
+  font-family: 'Arial', sans-serif;
+}
+
+.gradeCard {
+  padding: 24px 20px;
+  border-right: 1px solid #E0E4EE;
+  text-align: center;
+  background: #FFFEF8;
+}
+.gradeLabel {
+  font-size: 9px; font-weight: 700; letter-spacing: 0.12em;
+  color: #999; margin-bottom: 6px;
+  font-family: 'Arial', sans-serif;
+}
+.gradeMain {
+  font-size: 64px; font-weight: 900; line-height: 1;
+  font-family: 'Arial Black', sans-serif;
+  letter-spacing: -0.02em;
+}
+.gradeRemark {
+  font-size: 14px; color: #555; margin-top: 2px;
+  font-family: 'Georgia', serif; font-style: italic;
+}
+.statusPill {
+  display: inline-block;
+  margin-top: 10px; padding: 5px 18px;
+  border-radius: 20px; font-size: 12px; font-weight: 700;
+  border: 2px solid; letter-spacing: 0.05em;
+  font-family: 'Arial', sans-serif;
+}
+.statusPassed { } /* color set inline */
+.statusFailed { background: #FEF2F2; color: #DC2626; border-color: #FCA5A5; }
+.passMark { font-size: 10px; color: #aaa; margin-top: 6px; font-family: 'Arial', sans-serif; }
+
+.breakdownCard {
+  padding: 20px;
+  background: #F8F9FC;
+}
+.breakdownTitle {
+  font-size: 9px; font-weight: 700; letter-spacing: 0.12em;
+  color: #999; margin-bottom: 12px;
+  font-family: 'Arial', sans-serif;
+}
+.breakdownItems { display: flex; flex-direction: column; gap: 7px; }
+.breakdownItem {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 5px 0; border-bottom: 1px dashed #E0E4EE;
+}
+.breakdownItem:last-child { border-bottom: none; }
+.breakdownKey { font-size: 11px; color: #777; font-family: 'Arial', sans-serif; }
+.breakdownVal { font-size: 12px; font-weight: 700; color: #1A1A2E; font-family: 'Georgia', serif; }
+
+/* ── GRADING SCALE ── */
+.gradingSection { padding: 16px 32px; border-bottom: 1px solid #E0E4EE; }
+.gradingSectionTitle {
+  font-size: 9px; font-weight: 700; letter-spacing: 0.12em;
+  color: #999; margin-bottom: 10px;
+  font-family: 'Arial', sans-serif;
+}
+.gradingRow { display: flex; gap: 4px; }
+.gradingCell {
+  flex: 1; text-align: center; padding: 6px 4px;
+  border: 1px solid #E0E4EE; border-radius: 4px;
+  background: #F8F9FC;
+}
+.gradingCellActive { color: #fff !important; }
+.gradingCellGrade { font-size: 13px; font-weight: 800; font-family: 'Arial Black', sans-serif; }
+.gradingCellRange { font-size: 8px; color: inherit; opacity: 0.8; font-family: 'Arial', sans-serif; }
+.gradingCellRemark { font-size: 8px; color: inherit; opacity: 0.7; font-family: 'Arial', sans-serif; }
+
+/* ── TEACHER COMMENT ── */
+.commentSection { padding: 16px 32px; border-bottom: 1px solid #E0E4EE; }
+.commentTitle {
+  font-size: 9px; font-weight: 700; letter-spacing: 0.12em;
+  color: #999; margin-bottom: 10px;
+  font-family: 'Arial', sans-serif;
+}
+.commentBox {
+  display: flex; gap: 12px; align-items: flex-start;
+  padding: 14px 16px;
+  background: #F8F9FC; border-left: 4px solid;
+  border-left-color: #E0E4EE;
+  border-radius: 0 4px 4px 0;
+}
+.commentQuote { font-size: 48px; color: #DDE; line-height: 0.6; font-family: Georgia, serif; flex-shrink: 0; }
+.commentText { font-size: 13px; color: #444; line-height: 1.7; font-style: italic; font-family: 'Georgia', serif; }
+
+/* ── SIGNATURES ── */
+.signaturesSection {
+  display: grid; grid-template-columns: 1fr 1fr 1fr;
+  gap: 0; padding: 24px 32px;
+  border-bottom: 1px solid #E0E4EE;
+  align-items: end;
+}
+.signatureItem { text-align: center; padding: 0 16px; }
+.signatureLine {
+  height: 1px; background: #333;
+  margin-bottom: 6px;
+}
+.signatureName { font-size: 12px; font-weight: 600; color: #1A1A2E; font-family: 'Georgia', serif; }
+.signatureTitle { font-size: 10px; color: #888; letter-spacing: 0.04em; font-family: 'Arial', sans-serif; margin-top: 2px; }
+
+.stampBox {
+  width: 120px; height: 120px;
+  border-radius: 50%; border: 3px solid;
+  display: flex; align-items: center; justify-content: center;
+  margin: 0 auto;
+  transform: rotate(-8deg);
+  opacity: 0.85;
+}
+.stampInner { text-align: center; transform: rotate(0deg); }
+.stampSchool { font-size: 18px; font-weight: 900; font-family: 'Arial Black', sans-serif; letter-spacing: 0.05em; }
+.stampOfficial { font-size: 8px; font-weight: 700; letter-spacing: 0.08em; font-family: 'Arial', sans-serif; margin: 2px 0; }
+.stampDate { font-size: 8px; color: inherit; opacity: 0.8; font-family: 'Arial', sans-serif; }
+
+/* ── FOOTER ── */
+.footer {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 32px;
+  border-top: 1px solid;
+  font-size: 10px; font-family: 'Arial', sans-serif;
+}
+.footerLeft { display: flex; align-items: center; gap: 8px; color: #888; }
+.footerQR { font-size: 16px; }
+.footerCode { font-family: 'Courier New', monospace; color: #aaa; }
+.footerCenter { color: #888; text-align: center; flex: 1; margin: 0 16px; font-style: italic; }
+.footerRight { color: #bbb; }
+
+/* ── PRINT STYLES ── */
+@media print {
+  @page {
+    size: A4;
+    margin: 10mm;
+  }
+
+  body { background: #fff !important; }
+
+  .pageWrapper {
+    background: #fff !important;
+    padding: 0 !important;
+  }
+
+  .controls { display: none !important; }
+
+  .slip {
+    max-width: 100% !important;
+    box-shadow: none !important;
+    border-radius: 0 !important;
+    page-break-inside: avoid;
+  }
+
+  .scoreMain { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .header { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .gradingCellActive { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .chartFill { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .statusPill { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+}

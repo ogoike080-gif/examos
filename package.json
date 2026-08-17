@@ -1,0 +1,20 @@
+{
+  "name": "examos-2026",
+  "version": "1.0.0",
+  "description": "ExamOS 2026 — AI-Powered CBT Platform",
+  "private": true,
+  "workspaces": ["client", "server", "electron"],
+  "scripts": {
+    "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
+    "dev:client": "cd client && npm run dev",
+    "dev:server": "cd server && npm run dev",
+    "dev:desktop": "concurrently \"npm run dev:server\" \"npm run dev:client\" \"npm run electron:dev\"",
+    "electron:dev": "cd electron && npm run dev",
+    "build": "cd client && npm run build",
+    "build:desktop": "cd client && npm run build && cd ../electron && npm run build",
+    "install:all": "npm install && cd client && npm install && cd ../server && npm install && cd ../electron && npm install"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}
