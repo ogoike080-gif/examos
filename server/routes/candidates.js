@@ -11,7 +11,13 @@ router.get('/', authenticate, authorize('superadmin','admin','proctor','examiner
   try {
     const db = getDB();
     const { search, class_name, page=1, limit=100 } = req.query;
-    const offset = (page-1)*limit;
+    // LIMIT/OFFSET must be inlined, not passed as `?` placeholders — mysql2's
+    // execute() (prepared statements) frequently throws "Incorrect arguments
+    // to mysqld_stmt_execute" when LIMIT/OFFSET are parameterized. Safe to
+    // inline here since both are forced through Number()/clamping first.
+    const limitNum = Math.max(1, Math.min(500, Number(limit) || 100));
+    const pageNum = Math.max(1, Number(page) || 1);
+    const offsetNum = (pageNum - 1) * limitNum;
     let where = "role='candidate' AND is_active=TRUE";
     const params = [];
     if (search) {
@@ -22,11 +28,14 @@ router.get('/', authenticate, authorize('superadmin','admin','proctor','examiner
     const [candidates] = await db.execute(
       `SELECT id, email, full_name, reg_number, staff_id, class_name, last_login, created_at,
        (SELECT COUNT(*) FROM exam_sessions es WHERE es.candidate_id=users.id) as exam_count
-       FROM users WHERE ${where} ORDER BY class_name ASC, full_name ASC LIMIT ? OFFSET ?`,
-      [...params, Number(limit), Number(offset)]
+       FROM users WHERE ${where} ORDER BY class_name ASC, full_name ASC LIMIT ${limitNum} OFFSET ${offsetNum}`,
+      params
     );
     res.json({ candidates });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) {
+    console.error('GET /api/candidates error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // GET /api/candidates/classes

@@ -309,7 +309,13 @@ router.get('/', authenticate, async (req, res) => {
   try {
     const db = getDB();
     const { status, subject_id, page=1, limit=20 } = req.query;
-    const offset = (page-1)*limit;
+    // LIMIT/OFFSET must be inlined, not passed as `?` placeholders — mysql2's
+    // execute() (prepared statements) frequently throws "Incorrect arguments
+    // to mysqld_stmt_execute" when LIMIT/OFFSET are parameterized. Safe to
+    // inline here since both are forced through Number()/clamping first.
+    const limitNum = Math.max(1, Math.min(500, Number(limit) || 20));
+    const pageNum = Math.max(1, Number(page) || 1);
+    const offsetNum = (pageNum - 1) * limitNum;
     let where = '1=1'; const params = [];
     if (status)     { where += ' AND e.status=?';     params.push(status); }
     if (subject_id) { where += ' AND e.subject_id=?'; params.push(subject_id); }
@@ -320,8 +326,8 @@ router.get('/', authenticate, async (req, res) => {
          es.id as session_id, es.score, es.percentage
          FROM exams e LEFT JOIN subjects s ON e.subject_id=s.id
          INNER JOIN exam_sessions es ON e.id=es.exam_id
-         WHERE ${where} ORDER BY e.scheduled_at DESC LIMIT ? OFFSET ?`,
-        [...params, Number(limit), Number(offset)]
+         WHERE ${where} ORDER BY e.scheduled_at DESC LIMIT ${limitNum} OFFSET ${offsetNum}`,
+        params
       );
       for (const exam of exams) await autoActivateIfDue(db, exam);
       return res.json({ exams });
@@ -330,11 +336,14 @@ router.get('/', authenticate, async (req, res) => {
       `SELECT e.*, s.name as subject_name, u.full_name as created_by_name,
        (SELECT COUNT(*) FROM exam_sessions es WHERE es.exam_id=e.id) as candidate_count
        FROM exams e LEFT JOIN subjects s ON e.subject_id=s.id LEFT JOIN users u ON e.created_by=u.id
-       WHERE ${where} ORDER BY e.created_at DESC LIMIT ? OFFSET ?`,
-      [...params, Number(limit), Number(offset)]
+       WHERE ${where} ORDER BY e.created_at DESC LIMIT ${limitNum} OFFSET ${offsetNum}`,
+      params
     );
     res.json({ exams });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) {
+    console.error('GET /api/exams error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // POST /api/exams
