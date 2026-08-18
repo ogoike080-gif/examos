@@ -28,6 +28,13 @@ const { initSocket } = require('./socket/socketManager');
 const app = express();
 const server = http.createServer(app);
 
+// Trust Railway's reverse proxy so req.ip and X-Forwarded-For are read
+// correctly. Without this, express-rate-limit v7 throws on every request
+// when it detects X-Forwarded-For but doesn't trust the proxy — which is
+// exactly what was causing the global 500s on both API routes and static
+// assets (CSS/JS returning JSON error bodies instead of file content).
+app.set('trust proxy', 1);
+
 const gamificationRoutes = require('./routes/gamification');
 app.use('/api/gamification', gamificationRoutes);
 
