@@ -83,6 +83,7 @@ app.use(
         scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
         styleSrc: ["'self'", "'unsafe-inline'"],
         imgSrc: ["'self'", "data:", "blob:"],
+        mediaSrc: ["'self'", "data:", "blob:"],
         connectSrc: ["'self'", "ws:", "wss:", "http:", "https:"]
       }
     },
