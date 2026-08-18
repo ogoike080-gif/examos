@@ -288,6 +288,120 @@ async function createSchema() {
     )
   `);
 
+  // ── Import pipeline v2: staging tables + structured exam metadata ──────────
+  // Additive only — nothing above this line is touched, nothing existing loses data.
+
+  // Promote exam body / year / paper type / printed question number out of the
+  // `tags` JSON grab-bag into real, filterable columns on the live question bank.
+  // Nullable so existing rows (which have none of this) stay valid as-is.
+  try {
+    await db.execute(`ALTER TABLE questions ADD COLUMN exam_body VARCHAR(20) NULL`);
+    console.log('✅ questions.exam_body column added');
+  } catch (e) { /* already exists — safe to ignore */ }
+
+  try {
+    await db.execute(
+      `ALTER TABLE questions ADD COLUMN paper_type ENUM('objective','theory','essay','practical','combined') NULL`
+    );
+    console.log('✅ questions.paper_type column added');
+  } catch (e) { /* already exists — safe to ignore */ }
+
+  try {
+    await db.execute(`ALTER TABLE questions ADD COLUMN question_number INT NULL`);
+    console.log('✅ questions.question_number column added');
+  } catch (e) { /* already exists — safe to ignore */ }
+
+  // Composite index for the Exam Body -> Year -> Subject -> Paper Type -> Question
+  // Number lookup pattern (year still lives in `tags` for now — see Milestone 3
+  // note in the routes layer — so this index covers the three new columns plus
+  // subject_id, which together do most of the filtering work).
+  try {
+    await db.execute(
+      `ALTER TABLE questions ADD INDEX idx_exam_structure (exam_body, subject_id, paper_type, question_number)`
+    );
+    console.log('✅ questions exam-structure index added');
+  } catch (e) { /* already exists — safe to ignore */ }
+
+  // One row per upload (single image, zip batch, CSV, or JSON import). Tracks
+  // the whole run so a browser tab closing mid-review doesn't lose the work,
+  // and so partial failures can be retried without redoing the whole batch.
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS import_batches (
+      id VARCHAR(36) PRIMARY KEY,
+      exam_body VARCHAR(20) NOT NULL,
+      year VARCHAR(10) NOT NULL,
+      subject_id VARCHAR(36) NULL,
+      paper_type ENUM('objective','theory','essay','practical','combined') DEFAULT 'objective',
+      source_type ENUM('zip','image','csv','json') NOT NULL,
+      original_filename VARCHAR(255) NULL,
+      expected_count INT NULL,
+      pages_total INT DEFAULT 0,
+      pages_processed INT DEFAULT 0,
+      pages_failed INT DEFAULT 0,
+      extracted_count INT DEFAULT 0,
+      verified_count INT DEFAULT 0,
+      needs_review_count INT DEFAULT 0,
+      duplicate_count INT DEFAULT 0,
+      missing_count INT DEFAULT 0,
+      answer_conflict_count INT DEFAULT 0,
+      number_gaps JSON NULL,
+      quality_score DECIMAL(5,2) NULL,
+      status ENUM('processing','staging','review','published','cancelled') DEFAULT 'processing',
+      created_by VARCHAR(36) NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE SET NULL,
+      FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
+      INDEX idx_batch_status (status),
+      INDEX idx_batch_body_year (exam_body, year)
+    )
+  `);
+
+  // Every question a batch produces lands here first, never directly in the
+  // live `questions` table. Only rows explicitly published (via review) get
+  // copied over — see `published_question_id` once that happens. This is the
+  // gate that section 26 (database safety) requires and the old flow lacked.
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS staged_questions (
+      id VARCHAR(36) PRIMARY KEY,
+      import_batch_id VARCHAR(36) NOT NULL,
+      subject_id VARCHAR(36) NULL,
+      exam_body VARCHAR(20) NOT NULL,
+      year VARCHAR(10) NOT NULL,
+      paper_type ENUM('objective','theory','essay','practical','combined') DEFAULT 'objective',
+      question_number INT NULL,
+      question_text TEXT NOT NULL,
+      question_type ENUM('mcq','essay') DEFAULT 'mcq',
+      options JSON,
+      correct_answers JSON,
+      explanation TEXT,
+      difficulty ENUM('easy','medium','hard') DEFAULT 'medium',
+      marks DECIMAL(5,2) DEFAULT 1,
+      media_url VARCHAR(500) NULL,
+      source_photo VARCHAR(255) NULL,
+      source_paper_id VARCHAR(36) NULL,
+      confidence_score DECIMAL(5,2) NULL,
+      confidence_label ENUM('high','medium','low') NULL,
+      review_status ENUM('verified','needs_review','answer_conflict','duplicate','missing','rejected') DEFAULT 'needs_review',
+      review_notes TEXT NULL,
+      reviewed_by VARCHAR(36) NULL,
+      reviewed_at DATETIME NULL,
+      published_question_id VARCHAR(36) NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      FOREIGN KEY (import_batch_id) REFERENCES import_batches(id) ON DELETE CASCADE,
+      FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE SET NULL,
+      FOREIGN KEY (source_paper_id) REFERENCES source_papers(id) ON DELETE SET NULL,
+      FOREIGN KEY (reviewed_by) REFERENCES users(id) ON DELETE SET NULL,
+      FOREIGN KEY (published_question_id) REFERENCES questions(id) ON DELETE SET NULL,
+      INDEX idx_staged_batch (import_batch_id),
+      INDEX idx_staged_status (review_status),
+      INDEX idx_staged_number (import_batch_id, paper_type, question_number)
+    )
+  `);
+
+  console.log('✅ Import pipeline v2 schema ready');
+
   console.log('✅ Database schema ready');
 }
 
