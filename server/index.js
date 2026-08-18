@@ -33,18 +33,23 @@ const paymentsRoutes = require('./routes/payments');
 app.use('/api/payments', paymentsRoutes);
 
 
-// ── CORS: allow localhost AND any 192.168.x.x / 10.x.x.x on port 3000 ──
+// ── CORS: allow localhost/LAN IPs for local dev AND Railway production domains ──
 function isAllowedOrigin(origin) {
   if (!origin) return true; // non-browser / curl requests
   const allowed = [
     'http://localhost:3000',
     'http://127.0.0.1:3000',
+    'https://localhost:3000',
+    'https://127.0.0.1:3000',
+    'https://examos-production-bb48.up.railway.app',
   ];
   if (allowed.includes(origin)) return true;
-  // Allow any LAN IP on port 3000
-  if (/^http:\/\/192\.168\.\d+\.\d+:3000$/.test(origin)) return true;
-  if (/^http:\/\/10\.\d+\.\d+\.\d+:3000$/.test(origin))  return true;
-  if (/^http:\/\/172\.(1[6-9]|2\d|3[01])\.\d+\.\d+:3000$/.test(origin)) return true;
+  // Allow any LAN IP on port 3000 (http or https)
+  if (/^https?:\/\/192\.168\.\d+\.\d+:3000$/.test(origin)) return true;
+  if (/^https?:\/\/10\.\d+\.\d+\.\d+:3000$/.test(origin))  return true;
+  if (/^https?:\/\/172\.(1[6-9]|2\d|3[01])\.\d+\.\d+:3000$/.test(origin)) return true;
+  // Allow any Railway-hosted deployment (*.up.railway.app) over HTTPS
+  if (/^https:\/\/[a-zA-Z0-9-]+\.up\.railway\.app$/.test(origin)) return true;
   return false;
 }
 
