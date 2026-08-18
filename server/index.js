@@ -49,6 +49,12 @@ function isAllowedOrigin(origin) {
     'http://localhost:3000',
     'http://127.0.0.1:3000',
   ];
+  // Allow the deployed production domain itself (client is served from
+  // this same server, so its own JS module requests carry this Origin).
+  if (process.env.CLIENT_URL && origin === process.env.CLIENT_URL) return true;
+  // Also allow any *.up.railway.app domain as a safety net in case
+  // CLIENT_URL isn't set or Railway's assigned domain changes.
+  if (/^https:\/\/[a-z0-9-]+\.up\.railway\.app$/.test(origin)) return true;
   if (allowed.includes(origin)) return true;
   // Allow any LAN IP on port 3000
   if (/^http:\/\/192\.168\.\d+\.\d+:3000$/.test(origin)) return true;
@@ -125,9 +131,6 @@ app.use(morgan('combined'));
 // Static uploads
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-// Static files from client build
-app.use(express.static(path.join(__dirname, '../client/dist')));
-
 // ── API Routes ──
 app.use('/api/auth',       authRoutes);
 app.use('/api/exams',      examRoutes);
@@ -164,13 +167,17 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// SPA fallback - serve index.html for all non-API routes
+// ── Serve the built React app in production ──
 // Keeps this to one deployed service (cheaper on Railway) instead of hosting
 // the frontend separately. Anything not matched by an API route above falls
 // through to index.html so React Router can handle client-side routes.
-app.get(/^(?!\/api|\/uploads|\/socket\.io).*/, (req, res) => {
-  res.sendFile(path.join(__dirname, '../client/dist/index.html'));
-});
+if (process.env.NODE_ENV === 'production') {
+  const clientDist = path.join(__dirname, '..', 'client', 'dist');
+  app.use(express.static(clientDist));
+  app.get(/^(?!\/api|\/uploads|\/socket\.io).*/, (req, res) => {
+    res.sendFile(path.join(clientDist, 'index.html'));
+  });
+}
 
 // Global error handler
 app.use((err, req, res, next) => {
