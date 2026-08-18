@@ -24,6 +24,7 @@ const parentRoutes    = require('./routes/parent');
 const { initSocket } = require('./socket/socketManager');
 
 const app = express();
+app.set('trust proxy', 1);
 const server = http.createServer(app);
 
 const gamificationRoutes = require('./routes/gamification');
