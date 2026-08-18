@@ -5,13 +5,13 @@
   "private": true,
   "workspaces": ["client", "server", "electron"],
   "scripts": {
-    "start": "cd server && npm install && node index.js",
+    "start": "cd server && npm install --no-save && node index.js",
     "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
     "dev:client": "cd client && npm run dev",
     "dev:server": "cd server && npm run dev",
     "dev:desktop": "concurrently \"npm run dev:server\" \"npm run dev:client\" \"npm run electron:dev\"",
     "electron:dev": "cd electron && npm run dev",
-    "build": "cd client && npm install && npm run build",
+    "build": "cd client && npm install --no-save && npm run build",
     "build:desktop": "cd client && npm run build && cd ../electron && npm run build",
     "install:all": "npm install && cd client && npm install && cd ../server && npm install && cd ../electron && npm install"
   },
