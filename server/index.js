@@ -115,16 +115,6 @@ app.use(morgan('combined'));
 // Static uploads
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-const path = require('path');
-
-// Serve the built React app
-app.use(express.static(path.join(__dirname, '../client/dist')));
-
-// Catch-all: send index.html for any non-API route (so React Router works)
-app.get(/^(?!\/api).*/, (req, res) => {
-  res.sendFile(path.join(__dirname, '../client/dist/index.html'));
-});
-
 // ── API Routes ──
 app.use('/api/auth',       authRoutes);
 app.use('/api/exams',      examRoutes);
@@ -160,6 +150,18 @@ app.get('/api/health', (req, res) => {
     timestamp: new Date().toISOString(),
   });
 });
+
+// ── Serve the built React app in production ──
+// Keeps this to one deployed service (cheaper on Railway) instead of hosting
+// the frontend separately. Anything not matched by an API route above falls
+// through to index.html so React Router can handle client-side routes.
+if (process.env.NODE_ENV === 'production') {
+  const clientDist = path.join(__dirname, '..', 'client', 'dist');
+  app.use(express.static(clientDist));
+  app.get(/^(?!\/api|\/uploads|\/socket\.io).*/, (req, res) => {
+    res.sendFile(path.join(clientDist, 'index.html'));
+  });
+}
 
 // Global error handler
 app.use((err, req, res, next) => {
