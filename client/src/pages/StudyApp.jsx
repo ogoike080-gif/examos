@@ -27,9 +27,11 @@ const SUBJECTS = [
   'Civic Education','Commerce','Further Mathematics',
   'Technical Drawing','Islamic Studies','Christian Religious Studies',
 ];
-const YEARS = ['All Years','2024','2023','2022','2021','2020','2019','2018',
-  '2017','2016','2015','2014','2013','2012','2011','2010',
-  '2009','2008','2007','2006','2005'];
+// Generated rather than hand-typed, and starting from 1980 rather than 2005 —
+// WAEC/JAMB/NECO past questions commonly go back decades further than a
+// hardcoded recent-years list assumes (this is what was hiding the WAEC 1988
+// import: the year simply wasn't a selectable option).
+const YEARS = ['All Years', ...Array.from({ length: new Date().getFullYear() - 1980 + 1 }, (_, i) => String(new Date().getFullYear() - i))];
 
 // ── SETUP SCREEN ──────────────────────────────────────────────
 function SetupScreen({ onStart }) {
