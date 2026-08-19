@@ -25,6 +25,11 @@ export default function ImportBatchReviewPage() {
   const navigate = useNavigate();
   const [batch, setBatch] = useState(null);
   const [staged, setStaged] = useState([]);
+  const [pages, setPages] = useState([]);
+  const [retryingPageId, setRetryingPageId] = useState(null);
+  const [fillingNumber, setFillingNumber] = useState(null);
+  const [fillDraft, setFillDraft] = useState({ question_text: '', options: '', correct_answer: '', explanation: '', question_type: 'mcq' });
+  const [filling, setFilling] = useState(false);
   const [filter, setFilter] = useState(null); // null = all
   const [loading, setLoading] = useState(true);
   const [editingId, setEditingId] = useState(null);
@@ -36,16 +41,58 @@ export default function ImportBatchReviewPage() {
   const load = async () => {
     setLoading(true);
     try {
-      const [batchRes, stagedRes] = await Promise.all([
+      const [batchRes, stagedRes, pagesRes] = await Promise.all([
         importBatchAPI.get(id),
         importBatchAPI.staged(id, filter),
+        importBatchAPI.pages(id),
       ]);
       setBatch(batchRes.data.batch);
       setStaged(stagedRes.data.staged || []);
+      setPages(pagesRes.data.pages || []);
     } catch {
       toast.error('Could not load this batch');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const retryPage = async (pageId) => {
+    setRetryingPageId(pageId);
+    try {
+      const res = await importBatchAPI.retryPage(id, pageId);
+      toast.success(res.data.message);
+      load();
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Retry failed');
+    } finally {
+      setRetryingPageId(null);
+    }
+  };
+
+  const startFillMissing = (number) => {
+    setFillingNumber(number);
+    setFillDraft({ question_text: '', options: '', correct_answer: '', explanation: '', question_type: 'mcq' });
+  };
+
+  const submitFillMissing = async () => {
+    if (!fillDraft.question_text.trim()) { toast.error('Question text is required'); return; }
+    setFilling(true);
+    try {
+      const options = fillDraft.options.split('\n').map(s => s.trim()).filter(Boolean);
+      await importBatchAPI.fillMissing(id, fillingNumber, {
+        question_text: fillDraft.question_text,
+        options,
+        correct_answer: fillDraft.correct_answer || null,
+        explanation: fillDraft.explanation,
+        question_type: fillDraft.question_type,
+      });
+      toast.success(`Question ${fillingNumber} added and verified`);
+      setFillingNumber(null);
+      load();
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Could not add question');
+    } finally {
+      setFilling(false);
     }
   };
 
@@ -146,8 +193,71 @@ export default function ImportBatchReviewPage() {
 
       {batch.number_gaps && parseArr(batch.number_gaps).length > 0 && (
         <div style={{ ...cardS, borderColor: 'var(--warning)', background: 'var(--warning-dim)' }}>
-          ⚠ Missing question numbers from the objective section: {parseArr(batch.number_gaps).slice(0, 20).join(', ')}
-          {parseArr(batch.number_gaps).length > 20 ? '…' : ''} — likely skipped during reading, check the source photos.
+          <p style={{ marginBottom: 10 }}>
+            ⚠ Missing question numbers from the objective section — likely skipped during reading, check the source photos or type them in below:
+          </p>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            {parseArr(batch.number_gaps).map(n => (
+              <button key={n} onClick={() => startFillMissing(n)}
+                style={{ padding: '5px 12px', borderRadius: 'var(--r-lg)', border: '1.5px solid var(--warning)', background: 'var(--bg-raised)', color: 'var(--warning)', fontWeight: 700, fontSize: 12, cursor: 'pointer' }}>
+                + Add Q{n}
+              </button>
+            ))}
+          </div>
+
+          {fillingNumber !== null && (
+            <div style={{ marginTop: 14, padding: 14, background: 'var(--bg-raised)', borderRadius: 'var(--r-lg)', border: '1px solid var(--border)' }}>
+              <p style={{ fontWeight: 800, marginBottom: 10 }}>Manually add Question {fillingNumber}</p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <select style={inputS} value={fillDraft.question_type}
+                  onChange={e => setFillDraft(d => ({ ...d, question_type: e.target.value }))}>
+                  <option value="mcq">Multiple Choice</option>
+                  <option value="essay">Essay / Theory</option>
+                </select>
+                <textarea style={{ ...inputS, minHeight: 60 }} placeholder="Question text — type it exactly as printed on the paper"
+                  value={fillDraft.question_text} onChange={e => setFillDraft(d => ({ ...d, question_text: e.target.value }))} />
+                {fillDraft.question_type === 'mcq' && (
+                  <>
+                    <textarea style={{ ...inputS, minHeight: 80 }} placeholder="Options — one per line"
+                      value={fillDraft.options} onChange={e => setFillDraft(d => ({ ...d, options: e.target.value }))} />
+                    <input style={inputS} placeholder="Correct answer (must match an option exactly)"
+                      value={fillDraft.correct_answer} onChange={e => setFillDraft(d => ({ ...d, correct_answer: e.target.value }))} />
+                  </>
+                )}
+                <textarea style={{ ...inputS, minHeight: 40 }} placeholder="Explanation (optional)"
+                  value={fillDraft.explanation} onChange={e => setFillDraft(d => ({ ...d, explanation: e.target.value }))} />
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button onClick={submitFillMissing} disabled={filling}
+                    style={{ ...btnS(true), color: 'var(--success)', borderColor: 'var(--success)' }}>
+                    {filling ? 'Saving…' : 'Save & Verify'}
+                  </button>
+                  <button onClick={() => setFillingNumber(null)} style={btnS(false)}>Cancel</button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Page-by-page status, with retry for anything that failed */}
+      {pages.some(p => p.status === 'failed') && (
+        <div style={cardS}>
+          <label style={labelS}>Pages Needing Attention</label>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {pages.filter(p => p.status === 'failed').map(p => (
+              <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', background: 'var(--bg-raised)', borderRadius: 'var(--r)' }}>
+                <div>
+                  <span style={{ fontWeight: 700, fontSize: 13 }}>{p.filename}</span>
+                  <p style={{ fontSize: 12, color: 'var(--danger)', marginTop: 2 }}>{p.error_message}</p>
+                  {p.retry_count > 0 && <p style={{ fontSize: 11, color: 'var(--text-muted)' }}>Retried {p.retry_count}x</p>}
+                </div>
+                <button onClick={() => retryPage(p.id)} disabled={retryingPageId === p.id}
+                  style={{ ...btnS(false), color: 'var(--brand-light)', borderColor: 'var(--brand-light)' }}>
+                  {retryingPageId === p.id ? 'Retrying…' : 'Retry Page'}
+                </button>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 

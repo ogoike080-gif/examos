@@ -80,6 +80,13 @@ async function cropDiagram(buffer, box) {
   }
 }
 
+function mimeFor(name) {
+  const lower = name.toLowerCase();
+  if (lower.endsWith('.png')) return 'image/png';
+  if (lower.endsWith('.webp')) return 'image/webp';
+  return 'image/jpeg';
+}
+
 const zipUpload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 60 * 1024 * 1024 },
@@ -140,13 +147,12 @@ router.post('/zip', authenticate, authorize('superadmin', 'admin', 'examiner'), 
       const [existingRows] = await db.execute('SELECT question_text FROM questions WHERE is_active = TRUE');
       const existingSet = new Set(existingRows.map(r => normaliseText(r.question_text)));
 
-      const mimeFor = (name) => {
-        if (name.endsWith('.png')) return 'image/png';
-        if (name.endsWith('.webp')) return 'image/webp';
-        return 'image/jpeg';
-      };
-
       // ── PASS 1: read every photo ──
+      // Archive-first: every photo is saved to source_papers and gets a
+      // batch_pages row BEFORE extraction is attempted, regardless of whether
+      // extraction succeeds. This is what makes single-page retry possible —
+      // a failed page's photo is always on disk to retry against, without
+      // needing the original zip again.
       const rawQuestions = [];
       const rawAnswers = [];
       let pagesProcessed = 0, pagesFailed = 0;
@@ -155,9 +161,30 @@ router.post('/zip', authenticate, authorize('superadmin', 'admin', 'examiner'), 
 
       for (const entry of entries) {
         const filename = entry.entryName.split('/').pop();
+        const buffer = entry.getData();
+        photoBuffers[filename] = buffer;
+
+        let sourcePaperId = null;
         try {
-          const buffer = entry.getData();
-          photoBuffers[filename] = buffer;
+          const safeBody = safeFolderName(examBody);
+          const safeYear = safeFolderName(year);
+          const dir = path.join(SOURCE_PAPERS_DIR, safeBody, safeYear);
+          fs.mkdirSync(dir, { recursive: true });
+          const ext = path.extname(filename) || '.jpg';
+          const storedName = `${uuidv4()}${ext}`;
+          fs.writeFileSync(path.join(dir, storedName), buffer);
+          sourcePaperId = uuidv4();
+          photoImageUrls[filename] = { url: `/uploads/source-papers/${safeBody}/${safeYear}/${storedName}`, id: sourcePaperId };
+          await db.execute(
+            `INSERT INTO source_papers (id, exam_body, year, subject_id, file_path, original_filename, uploaded_by)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            [sourcePaperId, examBody, year, subjectId, `${safeBody}/${safeYear}/${storedName}`, filename, req.user.id]
+          );
+        } catch (archiveErr) {
+          console.error('batch source-paper archive error:', archiveErr.message);
+        }
+
+        try {
           const result = await extractQuestionsFromImage({
             imageBase64: buffer.toString('base64'),
             mediaType: mimeFor(filename.toLowerCase()),
@@ -172,27 +199,19 @@ router.post('/zip', authenticate, authorize('superadmin', 'admin', 'examiner'), 
           const pageAnswers = (result.answers || []).filter(a => a.number !== undefined && a.number !== null);
           pageAnswers.forEach(a => rawAnswers.push({ ...a, source_photo: filename }));
 
-          try {
-            const safeBody = safeFolderName(examBody);
-            const safeYear = safeFolderName(year);
-            const dir = path.join(SOURCE_PAPERS_DIR, safeBody, safeYear);
-            fs.mkdirSync(dir, { recursive: true });
-            const ext = path.extname(filename) || '.jpg';
-            const storedName = `${uuidv4()}${ext}`;
-            fs.writeFileSync(path.join(dir, storedName), buffer);
-            const sourcePaperId = uuidv4();
-            photoImageUrls[filename] = { url: `/uploads/source-papers/${safeBody}/${safeYear}/${storedName}`, id: sourcePaperId };
-            await db.execute(
-              `INSERT INTO source_papers (id, exam_body, year, subject_id, file_path, original_filename, uploaded_by)
-               VALUES (?, ?, ?, ?, ?, ?, ?)`,
-              [sourcePaperId, examBody, year, subjectId, `${safeBody}/${safeYear}/${storedName}`, filename, req.user.id]
-            );
-          } catch (archiveErr) {
-            console.error('batch source-paper archive error:', archiveErr.message);
-          }
+          await db.execute(
+            `INSERT INTO batch_pages (id, import_batch_id, filename, source_paper_id, status, questions_extracted)
+             VALUES (?, ?, ?, ?, 'success', ?)`,
+            [uuidv4(), batchId, filename, sourcePaperId, pageQuestions.length]
+          );
           pagesProcessed++;
         } catch (photoErr) {
           console.error(`batch zip photo error (${filename}):`, photoErr.message);
+          await db.execute(
+            `INSERT INTO batch_pages (id, import_batch_id, filename, source_paper_id, status, error_message)
+             VALUES (?, ?, ?, ?, 'failed', ?)`,
+            [uuidv4(), batchId, filename, sourcePaperId, photoErr.message]
+          );
           pagesFailed++;
         }
       }
@@ -538,6 +557,236 @@ router.delete('/:id', authenticate, authorize('superadmin', 'admin'), async (req
     }
     await db.execute('DELETE FROM import_batches WHERE id=?', [req.params.id]);
     res.json({ message: 'Batch cancelled and removed' });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// GET /api/import/batches/:id/pages — per-page status, for the retry UI
+router.get('/:id/pages', authenticate, authorize('superadmin', 'admin', 'examiner'), async (req, res) => {
+  try {
+    const db = getDB();
+    const [pages] = await db.execute(
+      `SELECT bp.*, sp.file_path FROM batch_pages bp
+       LEFT JOIN source_papers sp ON bp.source_paper_id = sp.id
+       WHERE bp.import_batch_id=? ORDER BY bp.filename`,
+      [req.params.id]
+    );
+    res.json({ pages });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// POST /api/import/batches/:id/pages/:pageId/retry — re-run extraction for
+// ONE failed page, without touching the rest of the batch. Reads the photo
+// back from disk (archived during the original upload, success or fail — see
+// the archive-first restructure in the /zip handler above), re-runs PASS 1
+// extraction, PASS 3 dedupe (against both the live bank and this batch's
+// existing staged rows), PASS 4 scoring, and PASS 5 re-verification if it
+// still scores low. New rows are appended to staged_questions and the
+// batch's aggregate counts are updated.
+//
+// Known scope limit, stated plainly rather than silently: this does NOT
+// re-run PASS 2 (cross-page answer-key matching) against the rest of the
+// batch — an answer key on a different page won't retroactively attach to
+// a question recovered here, and a number recovered here won't retroactively
+// resolve another page's previously-unmatched answer entry. Re-running full
+// cross-page matching would mean reprocessing the whole batch, which defeats
+// the point of a cheap single-page retry. If a retried page's own answer key
+// is on the SAME page, that still works — Pass 2 logic runs on this page's
+// own rawAnswers/rawQuestions just like it does inside the main batch loop.
+router.post('/:id/pages/:pageId/retry', authenticate, authorize('superadmin', 'admin', 'examiner'), async (req, res) => {
+  try {
+    const db = getDB();
+    const [batchRows] = await db.execute('SELECT * FROM import_batches WHERE id=?', [req.params.id]);
+    const batch = batchRows[0];
+    if (!batch) return res.status(404).json({ error: 'Batch not found' });
+
+    const [pageRows] = await db.execute(
+      `SELECT bp.*, sp.file_path FROM batch_pages bp
+       LEFT JOIN source_papers sp ON bp.source_paper_id = sp.id
+       WHERE bp.id=? AND bp.import_batch_id=?`,
+      [req.params.pageId, req.params.id]
+    );
+    const page = pageRows[0];
+    if (!page) return res.status(404).json({ error: 'Page not found in this batch' });
+    if (!page.file_path) return res.status(400).json({ error: 'Original photo for this page was not archived — cannot retry, re-upload the source zip instead' });
+
+    const fullPath = path.join(SOURCE_PAPERS_DIR, page.file_path);
+    if (!fs.existsSync(fullPath)) {
+      return res.status(400).json({ error: 'Archived photo file is missing from disk — cannot retry' });
+    }
+    const buffer = fs.readFileSync(fullPath);
+
+    const [existingRows] = await db.execute('SELECT question_text FROM questions WHERE is_active = TRUE');
+    const [stagedRows] = await db.execute('SELECT question_text FROM staged_questions WHERE import_batch_id=?', [req.params.id]);
+    const existingSet = new Set([...existingRows, ...stagedRows].map(r => normaliseText(r.question_text)));
+
+    let result;
+    try {
+      result = await extractQuestionsFromImage({
+        imageBase64: buffer.toString('base64'),
+        mediaType: mimeFor(page.filename),
+      });
+    } catch (extractErr) {
+      await db.execute(
+        `UPDATE batch_pages SET status='failed', error_message=?, retry_count=retry_count+1 WHERE id=?`,
+        [extractErr.message, page.id]
+      );
+      return res.status(502).json({ error: 'Retry failed again: ' + extractErr.message });
+    }
+
+    const pageQuestions = (result.questions || []).filter(q => q.question_text?.trim());
+    const pageAnswers = (result.answers || []).filter(a => a.number !== undefined && a.number !== null);
+
+    // Same-page Pass 2: match this page's own answer-key entries to its own
+    // questions (see the scope note in the doc comment above this route).
+    const numbered = new Map();
+    const unnumbered = [];
+    pageQuestions.forEach(q => {
+      const type = q.question_type === 'essay' ? 'essay' : 'mcq';
+      const entry = { ...q, question_type: type, options: q.options || [], correct_answers: [], explanation: q.explanation || '' };
+      if (q.number !== undefined && q.number !== null && !numbered.has(q.number)) numbered.set(q.number, entry);
+      else unnumbered.push(entry);
+    });
+    for (const a of pageAnswers) {
+      const target = numbered.get(a.number);
+      if (!target) continue;
+      const candidateAnswer = (a.correct_answer_letter && target.options.length)
+        ? target.options[a.correct_answer_letter.charCodeAt(0) - 65] : null;
+      if (!target.explanation && !target.correct_answers.length) {
+        if (a.solution_text) target.explanation = a.solution_text;
+        if (candidateAnswer) target.correct_answers = [candidateAnswer];
+      }
+    }
+
+    const merged = [...numbered.values(), ...unnumbered];
+    let inserted = 0, verifiedCount = 0, needsReviewCount = 0;
+    const seenThisRetry = new Set();
+
+    for (const q of merged) {
+      const norm = normaliseText(q.question_text);
+      if (existingSet.has(norm) || seenThisRetry.has(norm)) continue; // duplicate — skip
+      seenThisRetry.add(norm);
+
+      let diagramUrl = null;
+      if (q.has_diagram) diagramUrl = await cropDiagram(buffer, q.diagram_box);
+
+      const { score, band, reasons } = computeConfidence(
+        { confidence: q.confidence || 'medium', question_number: q.number ?? null, question_type: q.question_type,
+          options: q.options, correct_answers: q.correct_answers },
+        { diagramCropFailed: !!q.has_diagram && !diagramUrl }
+      );
+      let finalScore = score, finalStatus = band, finalNotes = reasons.join('; ') || null;
+      let questionText = q.question_text, options = q.options, correctAnswers = q.correct_answers;
+
+      if (finalScore < 75) {
+        try {
+          const verdict = await reverifyLowConfidenceQuestion({
+            imageBase64: buffer.toString('base64'),
+            mediaType: mimeFor(page.filename),
+            draftQuestion: {
+              question_number: q.number ?? null, question_text: q.question_text, options: q.options,
+              correct_answer_letter: correctAnswers[0] ? String.fromCharCode(65 + options.indexOf(correctAnswers[0])) : null,
+            },
+          });
+          if (verdict.changed_from_draft && verdict.found_on_page !== false) {
+            if (verdict.question_text) questionText = verdict.question_text;
+            if (Array.isArray(verdict.options) && verdict.options.length) options = verdict.options;
+            if (verdict.correct_answer_letter && options[verdict.correct_answer_letter.charCodeAt(0) - 65]) {
+              correctAnswers = [options[verdict.correct_answer_letter.charCodeAt(0) - 65]];
+            }
+            finalScore = Math.min(89, finalScore + 15);
+            finalNotes = (finalNotes ? finalNotes + '; ' : '') + 'corrected by Pass 5 re-verification (retry)';
+          } else if (!verdict.changed_from_draft && verdict.found_on_page !== false) {
+            finalScore = Math.min(89, finalScore + 8);
+          }
+          finalStatus = 'needs_review';
+        } catch (reverifyErr) {
+          console.error('retry Pass 5 error:', reverifyErr.message);
+        }
+      }
+
+      if (finalStatus === 'verified') verifiedCount++; else needsReviewCount++;
+
+      await db.execute(
+        `INSERT INTO staged_questions
+         (id, import_batch_id, subject_id, exam_body, year, paper_type, question_number,
+          question_text, question_type, options, correct_answers, explanation,
+          media_url, source_photo, confidence_score, confidence_label, review_status, review_notes)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          uuidv4(), req.params.id, batch.subject_id, batch.exam_body, batch.year,
+          q.question_type === 'essay' ? 'theory' : batch.paper_type, q.number ?? null,
+          questionText, q.question_type, JSON.stringify(options), JSON.stringify(correctAnswers),
+          q.explanation || null, diagramUrl, page.filename, finalScore, q.confidence || 'medium',
+          finalStatus, finalNotes,
+        ]
+      );
+      inserted++;
+    }
+
+    await db.execute(
+      `UPDATE batch_pages SET status='success', error_message=NULL, questions_extracted=?, retry_count=retry_count+1 WHERE id=?`,
+      [inserted, page.id]
+    );
+    await db.execute(
+      `UPDATE import_batches SET
+       pages_failed = GREATEST(0, pages_failed - 1), pages_processed = pages_processed + 1,
+       extracted_count = extracted_count + ?, verified_count = verified_count + ?,
+       needs_review_count = needs_review_count + ?
+       WHERE id=?`,
+      [inserted, verifiedCount, needsReviewCount, req.params.id]
+    );
+
+    res.json({ message: `Retry succeeded: ${inserted} question(s) extracted from this page`, inserted, verified: verifiedCount, needs_review: needsReviewCount });
+  } catch (err) {
+    console.error('page retry error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/import/batches/:id/missing/:number — manually complete a question
+// number that PASS 1 never extracted at all (flagged in batch.number_gaps).
+// Human-authored, so it's trusted at full confidence and marked verified
+// immediately rather than routed through scoring — an admin typing a question
+// straight from the paper doesn't need the pipeline to grade its own input.
+router.post('/:id/missing/:number', authenticate, authorize('superadmin', 'admin', 'examiner'), async (req, res) => {
+  try {
+    const db = getDB();
+    const number = Number(req.params.number);
+    if (!Number.isInteger(number)) return res.status(400).json({ error: 'Invalid question number' });
+
+    const { question_text, options, correct_answer, explanation, question_type } = req.body;
+    if (!question_text?.trim()) return res.status(400).json({ error: 'question_text is required' });
+
+    const [batchRows] = await db.execute('SELECT * FROM import_batches WHERE id=?', [req.params.id]);
+    const batch = batchRows[0];
+    if (!batch) return res.status(404).json({ error: 'Batch not found' });
+
+    const type = question_type === 'essay' ? 'essay' : 'mcq';
+    const opts = Array.isArray(options) ? options : [];
+    const correct = correct_answer ? [correct_answer] : [];
+
+    await db.execute(
+      `INSERT INTO staged_questions
+       (id, import_batch_id, subject_id, exam_body, year, paper_type, question_number,
+        question_text, question_type, options, correct_answers, explanation,
+        confidence_score, confidence_label, review_status, review_notes)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 100, 'high', 'verified', 'Manually completed by admin — missing from original extraction')`,
+      [
+        uuidv4(), req.params.id, batch.subject_id, batch.exam_body, batch.year,
+        type === 'essay' ? 'theory' : batch.paper_type, number,
+        question_text.trim(), type, JSON.stringify(opts), JSON.stringify(correct), explanation || null,
+      ]
+    );
+
+    const gaps = (() => { try { return JSON.parse(batch.number_gaps || '[]'); } catch { return []; } })();
+    const updatedGaps = gaps.filter(n => n !== number);
+
+    await db.execute(
+      `UPDATE import_batches SET number_gaps=?, extracted_count=extracted_count+1, verified_count=verified_count+1 WHERE id=?`,
+      [JSON.stringify(updatedGaps), req.params.id]
+    );
+
+    res.status(201).json({ message: `Question ${number} added and marked verified`, remaining_gaps: updatedGaps });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

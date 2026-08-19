@@ -155,6 +155,9 @@ export const importBatchAPI = {
   updateStaged: (id, stagedId, data) => axios.put(`${API}/import/batches/${id}/staged/${stagedId}`, data),
   publish: (id) => axios.post(`${API}/import/batches/${id}/publish`),
   cancel: (id) => axios.delete(`${API}/import/batches/${id}`),
+  pages: (id) => axios.get(`${API}/import/batches/${id}/pages`),
+  retryPage: (id, pageId) => axios.post(`${API}/import/batches/${id}/pages/${pageId}/retry`, {}, { timeout: 120000 }),
+  fillMissing: (id, number, data) => axios.post(`${API}/import/batches/${id}/missing/${number}`, data),
 };
 
 // ── SETTINGS ──────────────────────────────────────────────────

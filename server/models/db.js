@@ -402,6 +402,33 @@ async function createSchema() {
 
   console.log('✅ Import pipeline v2 schema ready');
 
+  // ── Milestone 5: per-page retry + missing-question completion ──────────────
+  // One row per photo in a batch. Previously only aggregate counts existed on
+  // import_batches (pages_processed/pages_failed) — a single failed page had
+  // no individually addressable record, so the only way to "retry" it was
+  // re-uploading the entire zip. This table makes each page retryable on its
+  // own, and always links to the archived source photo regardless of whether
+  // extraction succeeded, so retry never requires the original zip again.
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS batch_pages (
+      id VARCHAR(36) PRIMARY KEY,
+      import_batch_id VARCHAR(36) NOT NULL,
+      filename VARCHAR(255) NOT NULL,
+      source_paper_id VARCHAR(36) NULL,
+      status ENUM('success','failed') NOT NULL,
+      error_message TEXT NULL,
+      questions_extracted INT DEFAULT 0,
+      retry_count INT DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      FOREIGN KEY (import_batch_id) REFERENCES import_batches(id) ON DELETE CASCADE,
+      FOREIGN KEY (source_paper_id) REFERENCES source_papers(id) ON DELETE SET NULL,
+      INDEX idx_page_batch (import_batch_id),
+      INDEX idx_page_status (import_batch_id, status)
+    )
+  `);
+  console.log('✅ batch_pages table ready');
+
   console.log('✅ Database schema ready');
 }
 
