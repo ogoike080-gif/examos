@@ -143,6 +143,16 @@ export default function ImportBatchReviewPage() {
     } catch { toast.error('Could not update status'); }
   };
 
+  const resolveConflict = async (rowId, chosenAnswer) => {
+    try {
+      await importBatchAPI.updateStaged(id, rowId, { correct_answers: [chosenAnswer], review_status: 'verified' });
+      toast.success('Conflict resolved');
+      load();
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Could not resolve conflict');
+    }
+  };
+
   const publish = async () => {
     setPublishing(true);
     try {
@@ -285,6 +295,11 @@ export default function ImportBatchReviewPage() {
                   </span>
                   <span style={{ padding: '2px 10px', borderRadius: 'var(--r-full)', background: meta.bg, color: meta.fg, fontWeight: 700, fontSize: 11 }}>{meta.label}</span>
                   <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Confidence: {row.confidence_score}%</span>
+                  {row.source_page_url && (
+                    <a href={row.source_page_url} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: 'var(--brand-light)', textDecoration: 'none' }}>
+                      View Source Page ↗
+                    </a>
+                  )}
                 </div>
                 {!isEditing && (
                   <div style={{ display: 'flex', gap: 8 }}>
@@ -299,6 +314,33 @@ export default function ImportBatchReviewPage() {
 
               {row.review_notes && !isEditing && (
                 <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 10 }}>Notes: {row.review_notes}</p>
+              )}
+
+              {/* Answer conflict resolution — shows exactly what each source said,
+                  rather than just flagging that a disagreement exists. */}
+              {row.review_status === 'answer_conflict' && !isEditing && parseArr(row.answer_candidates).length > 0 && (
+                <div style={{ marginBottom: 10, padding: 12, background: 'var(--danger-dim)', borderRadius: 'var(--r)', border: '1px solid var(--danger)' }}>
+                  <p style={{ fontSize: 12, fontWeight: 800, color: 'var(--danger)', marginBottom: 8 }}>
+                    Sources disagree on the answer — pick the correct one:
+                  </p>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    {parseArr(row.answer_candidates).map((c, i) => (
+                      <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 10px', background: 'var(--bg-raised)', borderRadius: 'var(--r)' }}>
+                        <span style={{ fontSize: 13 }}>
+                          <strong>{c.answer}</strong>
+                          <span style={{ color: 'var(--text-muted)', marginLeft: 8 }}>
+                            {c.source === 'own_page' ? 'From the question\'s own page' : 'From an answer-key page'}
+                            {c.source_photo ? ` (${c.source_photo})` : ''}
+                          </span>
+                        </span>
+                        <button onClick={() => resolveConflict(row.id, c.answer)}
+                          style={{ ...btnS(false), color: 'var(--success)', borderColor: 'var(--success)' }}>
+                          Use This
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               )}
 
               {isEditing ? (

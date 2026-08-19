@@ -222,13 +222,13 @@ router.post('/zip', authenticate, authorize('superadmin', 'admin', 'examiner'), 
       const unnumbered = [];
 
       rawQuestions.forEach(q => {
+        const ownPageAnswer = (q.correct_answer_letter && Array.isArray(q.options))
+          ? q.options[q.correct_answer_letter.charCodeAt(0) - 65] : null;
         const merged = {
           question_text: q.question_text,
           question_type: q.question_type === 'essay' ? 'essay' : 'mcq',
           options: Array.isArray(q.options) ? q.options : [],
-          correct_answers: (q.correct_answer_letter && Array.isArray(q.options))
-            ? [q.options[q.correct_answer_letter.charCodeAt(0) - 65]].filter(Boolean)
-            : [],
+          correct_answers: ownPageAnswer ? [ownPageAnswer].filter(Boolean) : [],
           explanation: q.explanation || '',
           confidence: q.confidence || 'medium',
           source_photo: q.source_photo,
@@ -238,6 +238,13 @@ router.post('/zip', authenticate, authorize('superadmin', 'admin', 'examiner'), 
           answer_from_key_page: false,
           answer_confirmed_twice: false,
           answer_conflict: false,
+          // Every answer this question was ever assigned, with where it came
+          // from — not just the winning one. This is what lets the review
+          // screen actually show a conflict ("own page said B, p.9 key said
+          // C") instead of just flagging that one exists.
+          answer_candidates: ownPageAnswer
+            ? [{ source: 'own_page', source_photo: q.source_photo, answer: ownPageAnswer }]
+            : [],
         };
         const pool = merged.question_type === 'essay' ? theoryPool : objectivePool;
         if (q.number !== undefined && q.number !== null && !pool.has(q.number)) {
@@ -256,6 +263,10 @@ router.post('/zip', authenticate, authorize('superadmin', 'admin', 'examiner'), 
         const candidateAnswer = (a.correct_answer_letter && target.options.length)
           ? target.options[a.correct_answer_letter.charCodeAt(0) - 65]
           : null;
+
+        if (candidateAnswer) {
+          target.answer_candidates.push({ source: 'answer_key_page', source_photo: a.source_photo, answer: candidateAnswer });
+        }
 
         if (!target.explanation && !target.correct_answers.length) {
           if (a.solution_text) target.explanation = a.solution_text;
@@ -375,8 +386,9 @@ router.post('/zip', authenticate, authorize('superadmin', 'admin', 'examiner'), 
           `INSERT INTO staged_questions
            (id, import_batch_id, subject_id, exam_body, year, paper_type, question_number,
             question_text, question_type, options, correct_answers, explanation,
-            media_url, source_photo, confidence_score, confidence_label, review_status, review_notes)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            media_url, source_photo, confidence_score, confidence_label, review_status, review_notes,
+            answer_candidates)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             uuidv4(), batchId, subjectId, examBody, year,
             q.question_type === 'essay' ? 'theory' : paperType,
@@ -385,6 +397,7 @@ router.post('/zip', authenticate, authorize('superadmin', 'admin', 'examiner'), 
             JSON.stringify(q.options), JSON.stringify(q.correct_answers),
             q.explanation || null, q.media_url, q.source_photo,
             q._confidenceScore, q.confidence, status, q._reviewNotes,
+            JSON.stringify(q.answer_candidates || []),
           ]
         );
       }
@@ -458,14 +471,28 @@ router.get('/:id/staged', authenticate, authorize('superadmin', 'admin', 'examin
   try {
     const db = getDB();
     const { status } = req.query;
-    let where = 'import_batch_id=?';
+    let where = 'sq.import_batch_id=?';
     const params = [req.params.id];
-    if (status) { where += ' AND review_status=?'; params.push(status); }
+    if (status) { where += ' AND sq.review_status=?'; params.push(status); }
+    // Bridge through batch_pages (exact 1:1 link created during upload/retry)
+    // rather than matching on filename directly — CamScanner-style generic
+    // filenames ("CamScanner 2026-08-14...") can repeat across unrelated
+    // uploads, so a filename-only join could attach the wrong source image.
     const [rows] = await db.execute(
-      `SELECT * FROM staged_questions WHERE ${where} ORDER BY paper_type, question_number IS NULL, question_number`,
+      `SELECT sq.*, sp.file_path as source_file_path
+       FROM staged_questions sq
+       LEFT JOIN batch_pages bp
+         ON bp.import_batch_id = sq.import_batch_id AND bp.filename = sq.source_photo
+       LEFT JOIN source_papers sp ON sp.id = bp.source_paper_id
+       WHERE ${where}
+       ORDER BY sq.paper_type, sq.question_number IS NULL, sq.question_number`,
       params
     );
-    res.json({ staged: rows });
+    const staged = rows.map(r => ({
+      ...r,
+      source_page_url: r.source_file_path ? `/uploads/source-papers/${r.source_file_path}` : null,
+    }));
+    res.json({ staged });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -651,6 +678,9 @@ router.post('/:id/pages/:pageId/retry', authenticate, authorize('superadmin', 'a
       if (!target) continue;
       const candidateAnswer = (a.correct_answer_letter && target.options.length)
         ? target.options[a.correct_answer_letter.charCodeAt(0) - 65] : null;
+      if (!target.answer_candidates) target.answer_candidates = target.correct_answers.length
+        ? [{ source: 'own_page', source_photo: page.filename, answer: target.correct_answers[0] }] : [];
+      if (candidateAnswer) target.answer_candidates.push({ source: 'answer_key_page', source_photo: page.filename, answer: candidateAnswer });
       if (!target.explanation && !target.correct_answers.length) {
         if (a.solution_text) target.explanation = a.solution_text;
         if (candidateAnswer) target.correct_answers = [candidateAnswer];
@@ -710,14 +740,15 @@ router.post('/:id/pages/:pageId/retry', authenticate, authorize('superadmin', 'a
         `INSERT INTO staged_questions
          (id, import_batch_id, subject_id, exam_body, year, paper_type, question_number,
           question_text, question_type, options, correct_answers, explanation,
-          media_url, source_photo, confidence_score, confidence_label, review_status, review_notes)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          media_url, source_photo, confidence_score, confidence_label, review_status, review_notes,
+          answer_candidates)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           uuidv4(), req.params.id, batch.subject_id, batch.exam_body, batch.year,
           q.question_type === 'essay' ? 'theory' : batch.paper_type, q.number ?? null,
           questionText, q.question_type, JSON.stringify(options), JSON.stringify(correctAnswers),
           q.explanation || null, diagramUrl, page.filename, finalScore, q.confidence || 'medium',
-          finalStatus, finalNotes,
+          finalStatus, finalNotes, JSON.stringify(q.answer_candidates || []),
         ]
       );
       inserted++;

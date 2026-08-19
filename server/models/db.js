@@ -384,6 +384,7 @@ async function createSchema() {
       confidence_label ENUM('high','medium','low') NULL,
       review_status ENUM('verified','needs_review','answer_conflict','duplicate','missing','rejected') DEFAULT 'needs_review',
       review_notes TEXT NULL,
+      answer_candidates JSON NULL,
       reviewed_by VARCHAR(36) NULL,
       reviewed_at DATETIME NULL,
       published_question_id VARCHAR(36) NULL,
@@ -428,6 +429,15 @@ async function createSchema() {
     )
   `);
   console.log('✅ batch_pages table ready');
+
+  // ── Milestone 6: answer conflict resolution + source traceability ─────────
+  // Backfill for deployments where staged_questions already exists — new
+  // installs get this column from the CREATE TABLE above, existing ones need
+  // it added explicitly.
+  try {
+    await db.execute(`ALTER TABLE staged_questions ADD COLUMN answer_candidates JSON NULL`);
+    console.log('✅ staged_questions.answer_candidates column added');
+  } catch (e) { /* already exists — safe to ignore */ }
 
   console.log('✅ Database schema ready');
 }
