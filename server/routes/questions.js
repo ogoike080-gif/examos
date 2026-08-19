@@ -170,13 +170,16 @@ router.get('/', authenticate, async (req, res) => {
     // execute() (prepared statements) frequently throws "Incorrect arguments
     // to mysqld_stmt_execute" when LIMIT/OFFSET are parameterized. Safe to
     // inline here since both are forced through Number()/clamping above.
+    // Numbered questions (imported with a known printed question number) sort
+    // in that original order first; anything without a number (older manual
+    // entries, AI-generated questions) falls back to newest-first after them.
     const [questions] = await db.execute(
       `SELECT q.*, s.name as subject_name, u.full_name as created_by_name
        FROM questions q
        LEFT JOIN subjects s ON q.subject_id = s.id
        LEFT JOIN users u ON q.created_by = u.id
        WHERE ${where}
-       ORDER BY q.created_at DESC
+       ORDER BY (q.question_number IS NULL) ASC, q.question_number ASC, q.created_at DESC
        LIMIT ${limitNum} OFFSET ${offsetNum}`,
       params
     );

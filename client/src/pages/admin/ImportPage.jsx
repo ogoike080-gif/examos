@@ -430,7 +430,7 @@ export default function ImportPage() {
                 </tr>
               </thead>
               <tbody>
-                {parsed.slice(0, 50).map((q, i) => (
+                {parsed.map((q, i) => (
                   <tr key={i}>
                     <td className={styles.rowNum}>
                       {q.source_number != null ? <>#{q.source_number}</> : i + 1}
@@ -472,9 +472,6 @@ export default function ImportPage() {
                 ))}
               </tbody>
             </table>
-            {parsed.length > 50 && (
-              <div className={styles.moreRows}>...and {parsed.length - 50} more questions</div>
-            )}
           </div>
         </div>
       )}

@@ -592,11 +592,19 @@ router.post('/questions', authenticate, authorize('superadmin', 'admin', 'examin
         const examTypes = Array.isArray(q.exam_types) ? q.exam_types
           : exam_body ? [exam_body] : [];
 
+        // Persist the original printed question number and exam metadata so
+        // students see questions in the paper's actual order, not insertion
+        // order. Previously this was only shown in the preview table and
+        // discarded on save — the root cause of the ordering issue.
+        const questionNumber = (q.source_number ?? q.question_number ?? null);
+        const paperType = q.question_type === 'essay' ? 'theory' : 'objective';
+
         await db.execute(
           `INSERT INTO questions
            (id, subject_id, question_text, question_type, options, correct_answers,
-            explanation, difficulty, marks, tags, exam_types, media_url, created_by)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            explanation, difficulty, marks, tags, exam_types, media_url, created_by,
+            exam_body, paper_type, question_number)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             uuidv4(),
             resolvedSubjectId,
@@ -611,6 +619,9 @@ router.post('/questions', authenticate, authorize('superadmin', 'admin', 'examin
             JSON.stringify(examTypes),
             q.media_url || q.image_url || null,
             req.user.id,
+            exam_body || null,
+            paperType,
+            questionNumber,
           ]
         );
         results.success++;
