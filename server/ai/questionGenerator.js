@@ -296,11 +296,86 @@ When explaining difficult concepts, break them down into simple steps.`;
   return response.text;
 }
 
+/**
+ * PASS 5 — focused re-verification of a single low-confidence question.
+ *
+ * Only called for staged questions that scored below 75 in confidenceScoring.js.
+ * Re-sends the SAME source image, but this time narrows the model's attention
+ * to one specific already-extracted question instead of asking it to read the
+ * whole page again — a smaller, more constrained task the model tends to be
+ * more accurate on than a full-page first pass.
+ *
+ * Per section 29 (no hallucination): the model is explicitly told to leave a
+ * field unchanged rather than invent something it isn't confident about, and
+ * to say so via "unreadable" rather than silently guess.
+ */
+async function reverifyLowConfidenceQuestion({ imageBase64, mediaType, draftQuestion }) {
+  const prompt = `You are re-checking ONE specific question that was already extracted from this exam paper image, because the first extraction pass was not confident about it.
+
+Here is the draft extraction to verify:
+${JSON.stringify({
+    number: draftQuestion.question_number,
+    question_text: draftQuestion.question_text,
+    options: draftQuestion.options || [],
+    correct_answer_letter: draftQuestion.correct_answer_letter || null,
+  }, null, 2)}
+
+Look specifically at question number ${draftQuestion.question_number ?? '(unnumbered — locate it near where a number this close would appear)'} on the page.
+
+Respond in JSON only (no markdown, no backticks):
+{
+  "found_on_page": true|false,
+  "question_text": "the corrected/confirmed text, or the original if it was already correct",
+  "options": ["...", "...", "...", "..."],
+  "correct_answer_letter": "A|B|C|D|E|null",
+  "unreadable_fields": ["list any of: question_text, options, correct_answer_letter — that you genuinely cannot read clearly, rather than guessing"],
+  "changed_from_draft": true|false,
+  "verifier_confidence": "high|medium|low"
+}
+
+Rules:
+- If the draft was already accurate, return it unchanged with changed_from_draft: false.
+- Only change a field if you can clearly read something different from the draft on the actual page — never invent text that isn't visibly printed.
+- If you genuinely cannot locate or read this question on the page, set found_on_page to false and leave the other fields as the original draft values.
+- Do not guess a correct answer that isn't marked, circled, or otherwise indicated on the page — list it in unreadable_fields instead.`;
+
+  try {
+    const response = await ai.models.generateContent({
+      model: VISION_MODEL,
+      contents: [
+        {
+          role: 'user',
+          parts: [
+            { inlineData: { mimeType: mediaType, data: imageBase64 } },
+            { text: prompt },
+          ],
+        },
+      ],
+    });
+    return extractJSON(response.text);
+  } catch (err) {
+    console.error('Pass 5 re-verification failed:', err.message);
+    // Fail safe: report nothing changed rather than crash the batch —
+    // the question stays at its original (low) confidence and needs_review.
+    return {
+      found_on_page: null,
+      question_text: draftQuestion.question_text,
+      options: draftQuestion.options || [],
+      correct_answer_letter: draftQuestion.correct_answer_letter || null,
+      unreadable_fields: [],
+      changed_from_draft: false,
+      verifier_confidence: 'low',
+      verification_error: err.message,
+    };
+  }
+}
+
 module.exports = {
   analyzeProctoringEvent,
   generateQuestionsWithAI,
   gradeEssayWithAI,
   analyzeSessionBehavior,
   extractQuestionsFromImage,
+  reverifyLowConfidenceQuestion,
   chatWithStudyAssistant,
 };

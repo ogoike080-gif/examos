@@ -19,6 +19,7 @@ const analyticsRoutes = require('./routes/analytics');
 const proctorRoutes  = require('./routes/proctor');
 const subjectRoutes  = require('./routes/subjects');
 const importRoutes   = require('./routes/import');
+const importBatchesRoutes = require('./routes/importBatches');
 const settingsRoutes = require('./routes/settings');
 const resultsRoutes   = require('./routes/results');
 const aiRoutes        = require('./routes/ai');
@@ -141,6 +142,9 @@ app.use('/api/analytics',  analyticsRoutes);
 app.use('/api/proctor',    proctorRoutes);
 app.use('/api/subjects',   subjectRoutes);
 app.use('/api/import',     importRoutes);
+// New batch-based staging pipeline (Milestone 3) — mounted separately so the
+// existing zip-extract/image-extract routes above are completely untouched.
+app.use('/api/import/batches', importBatchesRoutes);
 app.use('/api/settings',   settingsRoutes);
 app.use('/api/results',  resultsRoutes);
 app.use('/api/ai',       aiRoutes);
