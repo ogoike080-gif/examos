@@ -23,6 +23,11 @@ import ImportPage         from './pages/admin/ImportPage';
 import ImportBatchesPage  from './pages/admin/ImportBatchesPage';
 import ImportBatchReviewPage from './pages/admin/ImportBatchReviewPage';
 import ExamBodyManagerPage from './pages/admin/ExamBodyManagerPage';
+import ExamPrepDashboard from './pages/candidate/ExamPrepDashboard';
+import ExamSelectionPage from './pages/candidate/ExamSelectionPage';
+import SubjectSelectionPage from './pages/candidate/SubjectSelectionPage';
+import TopicListPage from './pages/candidate/TopicListPage';
+import TopicLearningPage from './pages/candidate/TopicLearningPage';
 import SettingsPage       from './pages/admin/SettingsPage';
 import AdminResultsPage   from './pages/admin/AdminResultsPage';
 import EssayGradingPage   from './pages/admin/EssayGradingPage';
@@ -159,6 +164,11 @@ export default function App() {
           <Route path="profile"           element={<StudentProfile />} />
           <Route path="billing"           element={<BillingPage />} />
           <Route path="insights"          element={<InsightsPage />} />
+          <Route path="prep"                                    element={<ExamPrepDashboard />} />
+          <Route path="prep/:examBodyId"                        element={<ExamSelectionPage />} />
+          <Route path="prep/:examBodyId/:examinationId"         element={<SubjectSelectionPage />} />
+          <Route path="prep/:examBodyId/:examinationId/:subjectId" element={<TopicListPage />} />
+          <Route path="prep/topic/:topicId"                     element={<TopicLearningPage />} />
         </Route>
 
         {/* ── FULLSCREEN CANDIDATE ROUTES (no shared layout) ── */}

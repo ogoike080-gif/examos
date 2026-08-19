@@ -379,4 +379,118 @@ router.put('/topics/:topicId/content', authenticate, authorize(...ADMIN_ROLES), 
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// GET /topics/:topicId/published-content — student-safe: only ever returns
+// content that's actually been published, never a draft, regardless of role.
+// This is the one AI-content boundary that matters most (section 20).
+router.get('/topics/:topicId/published-content', authenticate, async (req, res) => {
+  try {
+    const db = getDB();
+    const [rows] = await db.execute(
+      "SELECT * FROM topic_content WHERE topic_id=? AND status='published'",
+      [req.params.topicId]
+    );
+    res.json({ content: rows[0] || null });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ═══════════════════════════ STUDENT PROGRESS ══════════════════════════════
+
+// GET /progress/subject/:subjectId — every topic in a subject with this
+// student's progress against it (or a default not_started row if they've
+// never touched it). Powers section 5's progress table.
+router.get('/progress/subject/:subjectId', authenticate, authorize('candidate'), async (req, res) => {
+  try {
+    const db = getDB();
+    const [rows] = await db.execute(
+      `SELECT t.id as topic_id, t.name as topic_name, t.display_order,
+              COALESCE(p.status, 'not_started') as status,
+              COALESCE(p.progress_percent, 0) as progress_percent,
+              p.practice_score, p.test_score, p.last_activity_at
+       FROM syllabus_topics t
+       LEFT JOIN student_topic_progress p ON p.topic_id = t.id AND p.student_id = ?
+       WHERE t.syllabus_subject_id = ? AND t.is_active = TRUE
+       ORDER BY t.display_order, t.name`,
+      [req.user.id, req.params.subjectId]
+    );
+    res.json({ topics: rows });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// GET /progress/topic/:topicId — this student's progress on one topic
+router.get('/progress/topic/:topicId', authenticate, authorize('candidate'), async (req, res) => {
+  try {
+    const db = getDB();
+    const [rows] = await db.execute(
+      'SELECT * FROM student_topic_progress WHERE student_id=? AND topic_id=?',
+      [req.user.id, req.params.topicId]
+    );
+    res.json({ progress: rows[0] || { status: 'not_started', progress_percent: 0 } });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// POST /progress/topic/:topicId/start — called when a student opens "Read
+// Topic". Only moves not_started -> in_progress; never downgrades a
+// completed/needs_revision topic just because they reopened it to review.
+router.post('/progress/topic/:topicId/start', authenticate, authorize('candidate'), async (req, res) => {
+  try {
+    const db = getDB();
+    const [existing] = await db.execute('SELECT id, status FROM student_topic_progress WHERE student_id=? AND topic_id=?', [req.user.id, req.params.topicId]);
+    if (existing[0]) {
+      if (existing[0].status === 'not_started') {
+        await db.execute("UPDATE student_topic_progress SET status='in_progress', progress_percent=GREATEST(progress_percent,10), last_activity_at=NOW() WHERE id=?", [existing[0].id]);
+      } else {
+        await db.execute('UPDATE student_topic_progress SET last_activity_at=NOW() WHERE id=?', [existing[0].id]);
+      }
+    } else {
+      await db.execute(
+        `INSERT INTO student_topic_progress (id, student_id, topic_id, status, progress_percent, last_activity_at)
+         VALUES (?, ?, ?, 'in_progress', 10, NOW())`,
+        [uuidv4(), req.user.id, req.params.topicId]
+      );
+    }
+    res.json({ message: 'Progress updated' });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// POST /progress/topic/:topicId/complete — "Mark Topic as Completed"
+router.post('/progress/topic/:topicId/complete', authenticate, authorize('candidate'), async (req, res) => {
+  try {
+    const db = getDB();
+    const [existing] = await db.execute('SELECT id FROM student_topic_progress WHERE student_id=? AND topic_id=?', [req.user.id, req.params.topicId]);
+    if (existing[0]) {
+      await db.execute("UPDATE student_topic_progress SET status='completed', progress_percent=100, completed_at=NOW(), last_activity_at=NOW() WHERE id=?", [existing[0].id]);
+    } else {
+      await db.execute(
+        `INSERT INTO student_topic_progress (id, student_id, topic_id, status, progress_percent, completed_at, last_activity_at)
+         VALUES (?, ?, ?, 'completed', 100, NOW(), NOW())`,
+        [uuidv4(), req.user.id, req.params.topicId]
+      );
+    }
+    res.json({ message: 'Topic marked complete' });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// GET /continue-learning — the single most recently touched, not-yet-complete
+// topic, with the full breadcrumb needed to render the resume card (section 19)
+router.get('/continue-learning', authenticate, authorize('candidate'), async (req, res) => {
+  try {
+    const db = getDB();
+    const [rows] = await db.execute(
+      `SELECT p.topic_id, p.progress_percent, p.status, p.last_activity_at,
+              t.name as topic_name, ss.id as subject_id, ss.name as subject_name,
+              e.id as examination_id, e.name as examination_name,
+              eb.id as exam_body_id, eb.name as exam_body_name
+       FROM student_topic_progress p
+       JOIN syllabus_topics t ON p.topic_id = t.id
+       JOIN syllabus_subjects ss ON t.syllabus_subject_id = ss.id
+       JOIN examinations e ON ss.examination_id = e.id
+       JOIN exam_bodies eb ON e.exam_body_id = eb.id
+       WHERE p.student_id = ? AND p.status = 'in_progress'
+       ORDER BY p.last_activity_at DESC LIMIT 1`,
+      [req.user.id]
+    );
+    res.json({ continue_learning: rows[0] || null });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 module.exports = router;

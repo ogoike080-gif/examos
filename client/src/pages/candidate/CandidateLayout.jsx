@@ -16,6 +16,7 @@ export function CandidateLayout() {
 
   const tabs = [
     { path:'/exam',         label:'Exams',    icon:'📝' },
+    { path:'/exam/prep',    label:'Study',    icon:'🎓' },
     { path:'/exam/results', label:'Results',  icon:'📊' },
     { path:'/exam/insights',label:'Insights', icon:'🔍' },
     { path:'/exam/billing', label:'Upgrade',  icon:'💎' },

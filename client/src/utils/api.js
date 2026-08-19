@@ -189,6 +189,14 @@ export const syllabusAPI = {
   getContent: (topicId) => axios.get(`${API}/syllabus/topics/${topicId}/content`),
   generateContent: (topicId) => axios.post(`${API}/syllabus/topics/${topicId}/content/generate`, {}, { timeout: 60000 }),
   saveContent: (topicId, data) => axios.put(`${API}/syllabus/topics/${topicId}/content`, data),
+
+  // Student-facing
+  getPublishedContent: (topicId) => axios.get(`${API}/syllabus/topics/${topicId}/published-content`),
+  subjectProgress: (subjectId) => axios.get(`${API}/syllabus/progress/subject/${subjectId}`),
+  topicProgress: (topicId) => axios.get(`${API}/syllabus/progress/topic/${topicId}`),
+  startTopic: (topicId) => axios.post(`${API}/syllabus/progress/topic/${topicId}/start`),
+  completeTopic: (topicId) => axios.post(`${API}/syllabus/progress/topic/${topicId}/complete`),
+  continueLearning: () => axios.get(`${API}/syllabus/continue-learning`),
 };
 
 // ── SETTINGS ──────────────────────────────────────────────────
