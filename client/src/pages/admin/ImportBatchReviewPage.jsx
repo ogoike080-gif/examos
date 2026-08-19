@@ -13,6 +13,7 @@ const STATUS_META = {
 };
 
 const cardS = { background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 'var(--r-xl)', padding: '20px' };
+const labelS = { fontSize: 11, color: 'var(--text-muted)', fontWeight: 700, display: 'block', marginBottom: 8 };
 const inputS = { width: '100%', padding: '8px 10px', borderRadius: 'var(--r)', border: '1.5px solid var(--border-md)', background: 'var(--bg-raised)', color: 'var(--text-primary)', fontFamily: 'var(--font-body)', fontSize: 13 };
 const btnS = (active) => ({
   padding: '6px 14px', borderRadius: 'var(--r-lg)', border: `1.5px solid ${active ? 'var(--brand-light)' : 'var(--border)'}`,
