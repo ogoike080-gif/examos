@@ -20,6 +20,7 @@ const proctorRoutes  = require('./routes/proctor');
 const subjectRoutes  = require('./routes/subjects');
 const importRoutes   = require('./routes/import');
 const importBatchesRoutes = require('./routes/importBatches');
+const syllabusRoutes = require('./routes/syllabus');
 const settingsRoutes = require('./routes/settings');
 const resultsRoutes   = require('./routes/results');
 const aiRoutes        = require('./routes/ai');
@@ -145,6 +146,8 @@ app.use('/api/import',     importRoutes);
 // New batch-based staging pipeline (Milestone 3) — mounted separately so the
 // existing zip-extract/image-extract routes above are completely untouched.
 app.use('/api/import/batches', importBatchesRoutes);
+// Exam Preparation Learning System — Exam Body Manager + topic content
+app.use('/api/syllabus', syllabusRoutes);
 app.use('/api/settings',   settingsRoutes);
 app.use('/api/results',  resultsRoutes);
 app.use('/api/ai',       aiRoutes);

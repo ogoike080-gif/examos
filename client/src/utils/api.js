@@ -160,6 +160,37 @@ export const importBatchAPI = {
   fillMissing: (id, number, data) => axios.post(`${API}/import/batches/${id}/missing/${number}`, data),
 };
 
+// ── EXAM PREPARATION SYLLABUS (Exam Body Manager) ────────────────
+export const syllabusAPI = {
+  examBodies: () => axios.get(`${API}/syllabus/exam-bodies`),
+  createExamBody: (data) => axios.post(`${API}/syllabus/exam-bodies`, data),
+  updateExamBody: (id, data) => axios.put(`${API}/syllabus/exam-bodies/${id}`, data),
+  deleteExamBody: (id) => axios.delete(`${API}/syllabus/exam-bodies/${id}`),
+
+  examinations: (examBodyId) => axios.get(`${API}/syllabus/exam-bodies/${examBodyId}/examinations`),
+  createExamination: (examBodyId, data) => axios.post(`${API}/syllabus/exam-bodies/${examBodyId}/examinations`, data),
+  updateExamination: (id, data) => axios.put(`${API}/syllabus/examinations/${id}`, data),
+  deleteExamination: (id) => axios.delete(`${API}/syllabus/examinations/${id}`),
+
+  subjects: (examinationId) => axios.get(`${API}/syllabus/examinations/${examinationId}/subjects`),
+  createSubject: (examinationId, data) => axios.post(`${API}/syllabus/examinations/${examinationId}/subjects`, data),
+  updateSubject: (id, data) => axios.put(`${API}/syllabus/subjects/${id}`, data),
+  deleteSubject: (id) => axios.delete(`${API}/syllabus/subjects/${id}`),
+
+  topics: (subjectId) => axios.get(`${API}/syllabus/subjects/${subjectId}/topics`),
+  createTopic: (subjectId, data) => axios.post(`${API}/syllabus/subjects/${subjectId}/topics`, data),
+  updateTopic: (id, data) => axios.put(`${API}/syllabus/topics/${id}`, data),
+  deleteTopic: (id) => axios.delete(`${API}/syllabus/topics/${id}`),
+  getTopic: (id) => axios.get(`${API}/syllabus/topics/${id}`),
+
+  createSubtopic: (topicId, data) => axios.post(`${API}/syllabus/topics/${topicId}/subtopics`, data),
+  deleteSubtopic: (id) => axios.delete(`${API}/syllabus/subtopics/${id}`),
+
+  getContent: (topicId) => axios.get(`${API}/syllabus/topics/${topicId}/content`),
+  generateContent: (topicId) => axios.post(`${API}/syllabus/topics/${topicId}/content/generate`, {}, { timeout: 60000 }),
+  saveContent: (topicId, data) => axios.put(`${API}/syllabus/topics/${topicId}/content`, data),
+};
+
 // ── SETTINGS ──────────────────────────────────────────────────
 export const settingsAPI = {
   get: () => axios.get(`${API}/settings`),

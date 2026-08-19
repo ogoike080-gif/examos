@@ -13,6 +13,7 @@ const NAV = [
   { to: '/admin/monitor',   label: 'Live Monitor',    icon: '📡' },
   { to: '/admin/analytics', label: 'Analytics',       icon: '📈' },
   { to: '/admin/subjects',  label: 'Subjects',        icon: '📚' },
+  { to: '/admin/syllabus',  label: 'Exam Body Manager', icon: '🎓' },
   { to: '/admin/import',    label: 'Import',          icon: '⬆' },
   { to: '/admin/import/batches', label: 'Import (Reviewed)', icon: '🧾' },
   { to: '/admin/settings',  label: 'Settings',        icon: '⚙' },

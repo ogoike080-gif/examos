@@ -370,6 +370,42 @@ Rules:
   }
 }
 
+/**
+ * Drafts exam-prep learning content for one syllabus topic — the "Read Topic"
+ * material from the exam-preparation spec. Always returns a DRAFT; the
+ * calling route is responsible for keeping it unpublished until an admin
+ * reviews it (section 20: never show AI content as official without review).
+ */
+async function generateTopicContent({ examBody, examination, subject, topic }) {
+  const prompt = `You are drafting exam-preparation study material for a Nigerian secondary school student, for the following exact topic:
+
+Examination Body: ${examBody}
+Examination: ${examination}
+Subject: ${subject}
+Topic: ${topic}
+
+This content will be reviewed and edited by a qualified teacher before students see it — draft it as a strong starting point, not final copy. Focus specifically on what's needed for ${examBody} ${examination} exam success on this topic, not a general textbook chapter.
+
+Respond in JSON only (no markdown, no backticks):
+{
+  "learning_objectives": "3-5 bullet points (as a single string with line breaks) of what the student should be able to do after this topic",
+  "key_concepts": "the core ideas explained clearly, in plain language a student can follow",
+  "formulas": "any formulas relevant to this topic, clearly labeled — write 'None applicable' if the topic has none",
+  "definitions": "important terms and their definitions",
+  "worked_examples": "1-3 worked examples showing step-by-step solutions, exam-style",
+  "exam_tips": "specific patterns ${examBody} tends to test on this topic, and what students commonly get wrong",
+  "common_mistakes": "the specific errors students typically make on this topic and how to avoid them"
+}
+
+Keep each field factually careful — do not invent formulas, dates, or claims you're not confident are accurate. If genuinely unsure about something specific to ${examBody}'s exact syllabus emphasis, write general best-practice guidance instead of guessing at exam-body-specific details.`;
+
+  const response = await ai.models.generateContent({
+    model: MODEL,
+    contents: [{ role: 'user', parts: [{ text: prompt }] }],
+  });
+  return extractJSON(response.text);
+}
+
 module.exports = {
   analyzeProctoringEvent,
   generateQuestionsWithAI,
@@ -377,5 +413,6 @@ module.exports = {
   analyzeSessionBehavior,
   extractQuestionsFromImage,
   reverifyLowConfidenceQuestion,
+  generateTopicContent,
   chatWithStudyAssistant,
 };

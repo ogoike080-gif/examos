@@ -440,6 +440,144 @@ async function createSchema() {
   } catch (e) { /* already exists — safe to ignore */ }
 
   console.log('✅ Database schema ready');
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // Exam Preparation Learning System — Milestone A: syllabus data model
+  // ═══════════════════════════════════════════════════════════════════════
+  // A separate hierarchy from the existing flat `subjects` table (which
+  // stays as-is, still used by the CBT question bank/exams engine). This
+  // models Exam Body -> Examination -> Subject -> Topic -> Subtopic, with an
+  // optional link from a syllabus subject to an existing CBT subject so
+  // Milestone D can pull real practice/test questions for a topic without
+  // duplicating the question bank.
+
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS exam_bodies (
+      id VARCHAR(36) PRIMARY KEY,
+      name VARCHAR(255) NOT NULL,
+      code VARCHAR(20) UNIQUE NOT NULL,
+      description TEXT NULL,
+      is_active BOOLEAN DEFAULT TRUE,
+      display_order INT DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    )
+  `);
+
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS examinations (
+      id VARCHAR(36) PRIMARY KEY,
+      exam_body_id VARCHAR(36) NOT NULL,
+      name VARCHAR(255) NOT NULL,
+      code VARCHAR(30) NOT NULL,
+      description TEXT NULL,
+      is_active BOOLEAN DEFAULT TRUE,
+      display_order INT DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      FOREIGN KEY (exam_body_id) REFERENCES exam_bodies(id) ON DELETE CASCADE,
+      UNIQUE KEY uniq_exam_per_body (exam_body_id, code),
+      INDEX idx_exam_body (exam_body_id)
+    )
+  `);
+
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS syllabus_subjects (
+      id VARCHAR(36) PRIMARY KEY,
+      examination_id VARCHAR(36) NOT NULL,
+      linked_subject_id VARCHAR(36) NULL,
+      name VARCHAR(255) NOT NULL,
+      code VARCHAR(30) NULL,
+      description TEXT NULL,
+      is_active BOOLEAN DEFAULT TRUE,
+      display_order INT DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      FOREIGN KEY (examination_id) REFERENCES examinations(id) ON DELETE CASCADE,
+      FOREIGN KEY (linked_subject_id) REFERENCES subjects(id) ON DELETE SET NULL,
+      INDEX idx_syllabus_subject_exam (examination_id)
+    )
+  `);
+
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS syllabus_topics (
+      id VARCHAR(36) PRIMARY KEY,
+      syllabus_subject_id VARCHAR(36) NOT NULL,
+      name VARCHAR(255) NOT NULL,
+      slug VARCHAR(255) NULL,
+      description TEXT NULL,
+      is_active BOOLEAN DEFAULT TRUE,
+      display_order INT DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      FOREIGN KEY (syllabus_subject_id) REFERENCES syllabus_subjects(id) ON DELETE CASCADE,
+      INDEX idx_topic_subject (syllabus_subject_id)
+    )
+  `);
+
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS syllabus_subtopics (
+      id VARCHAR(36) PRIMARY KEY,
+      topic_id VARCHAR(36) NOT NULL,
+      name VARCHAR(255) NOT NULL,
+      display_order INT DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (topic_id) REFERENCES syllabus_topics(id) ON DELETE CASCADE,
+      INDEX idx_subtopic_topic (topic_id)
+    )
+  `);
+
+  // One content record per topic. AI drafts it, admin edits/approves it —
+  // same draft-then-publish shape as the question import pipeline's staging
+  // table, just for learning content instead of questions. Students only
+  // ever see 'published' rows (section 20: never show unreviewed AI content
+  // as if it were official).
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS topic_content (
+      id VARCHAR(36) PRIMARY KEY,
+      topic_id VARCHAR(36) NOT NULL UNIQUE,
+      learning_objectives TEXT NULL,
+      key_concepts TEXT NULL,
+      formulas TEXT NULL,
+      definitions TEXT NULL,
+      worked_examples TEXT NULL,
+      exam_tips TEXT NULL,
+      common_mistakes TEXT NULL,
+      status ENUM('draft','published') DEFAULT 'draft',
+      generated_by ENUM('ai','admin','ai_then_admin') DEFAULT 'ai',
+      ai_generated_at DATETIME NULL,
+      reviewed_by VARCHAR(36) NULL,
+      reviewed_at DATETIME NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      FOREIGN KEY (topic_id) REFERENCES syllabus_topics(id) ON DELETE CASCADE,
+      FOREIGN KEY (reviewed_by) REFERENCES users(id) ON DELETE SET NULL
+    )
+  `);
+
+  // Per-student, per-topic progress — section 5's status/progress table and
+  // section 19's "Continue Learning" both read from this.
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS student_topic_progress (
+      id VARCHAR(36) PRIMARY KEY,
+      student_id VARCHAR(36) NOT NULL,
+      topic_id VARCHAR(36) NOT NULL,
+      status ENUM('not_started','in_progress','completed','needs_revision') DEFAULT 'not_started',
+      progress_percent DECIMAL(5,2) DEFAULT 0,
+      practice_score DECIMAL(5,2) NULL,
+      test_score DECIMAL(5,2) NULL,
+      last_activity_at DATETIME NULL,
+      completed_at DATETIME NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      FOREIGN KEY (student_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (topic_id) REFERENCES syllabus_topics(id) ON DELETE CASCADE,
+      UNIQUE KEY uniq_student_topic (student_id, topic_id),
+      INDEX idx_progress_student (student_id)
+    )
+  `);
+
+  console.log('✅ Exam preparation syllabus schema ready');
 }
 
 module.exports = { initDB, getDB };

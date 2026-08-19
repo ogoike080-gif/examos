@@ -22,6 +22,7 @@ import SubjectsPage       from './pages/admin/SubjectsPage';
 import ImportPage         from './pages/admin/ImportPage';
 import ImportBatchesPage  from './pages/admin/ImportBatchesPage';
 import ImportBatchReviewPage from './pages/admin/ImportBatchReviewPage';
+import ExamBodyManagerPage from './pages/admin/ExamBodyManagerPage';
 import SettingsPage       from './pages/admin/SettingsPage';
 import AdminResultsPage   from './pages/admin/AdminResultsPage';
 import EssayGradingPage   from './pages/admin/EssayGradingPage';
@@ -133,6 +134,7 @@ export default function App() {
           <Route path="import"             element={<ImportPage />} />
           <Route path="import/batches"     element={<ImportBatchesPage />} />
           <Route path="import/batches/:id" element={<ImportBatchReviewPage />} />
+          <Route path="syllabus" element={<ExamBodyManagerPage />} />
           <Route path="settings"           element={<SettingsPage />} />
         </Route>
 
