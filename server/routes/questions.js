@@ -144,7 +144,9 @@ router.get('/', authenticate, async (req, res) => {
       page = 1, limit = 25,
     } = req.query;
 
-    const offset = (Number(page) - 1) * Number(limit);
+    const limitNum = Math.max(1, Math.min(200, Number(limit) || 25));
+    const pageNum = Math.max(1, Number(page) || 1);
+    const offsetNum = (pageNum - 1) * limitNum;
     let where = 'q.is_active = TRUE';
     const params = [];
 
@@ -156,6 +158,10 @@ router.get('/', authenticate, async (req, res) => {
     if (year && year !== 'All Years' && year !== 'All') { where += ' AND JSON_CONTAINS(q.tags, ?)'; params.push(JSON.stringify(String(year))); }
     if (search)      { where += ' AND q.question_text LIKE ?'; params.push(`%${search}%`); }
 
+    // LIMIT/OFFSET must be inlined, not passed as `?` placeholders — mysql2's
+    // execute() (prepared statements) frequently throws "Incorrect arguments
+    // to mysqld_stmt_execute" when LIMIT/OFFSET are parameterized. Safe to
+    // inline here since both are forced through Number()/clamping above.
     const [questions] = await db.execute(
       `SELECT q.*, s.name as subject_name, u.full_name as created_by_name
        FROM questions q
@@ -163,8 +169,8 @@ router.get('/', authenticate, async (req, res) => {
        LEFT JOIN users u ON q.created_by = u.id
        WHERE ${where}
        ORDER BY q.created_at DESC
-       LIMIT ? OFFSET ?`,
-      [...params, Number(limit), Number(offset)]
+       LIMIT ${limitNum} OFFSET ${offsetNum}`,
+      params
     );
 
     const [[{ total }]] = await db.execute(
