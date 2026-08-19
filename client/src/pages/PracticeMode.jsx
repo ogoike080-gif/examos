@@ -33,6 +33,15 @@ const TOPICS = {
   'default': ['All Topics'],
 };
 
+const YEARS = ['All', ...Array.from({ length: 8 }, (_, i) => new Date().getFullYear() - i)];
+const PAPER_TYPES = [
+  { id: 'Any', label: 'Any Paper' },
+  { id: 'objective', label: 'Objective' },
+  { id: 'theory', label: 'Theory' },
+  { id: 'essay', label: 'Essay' },
+  { id: 'practical', label: 'Practical' },
+];
+
 function formatTime(s) {
   const h = Math.floor(s/3600), m = Math.floor((s%3600)/60), sec = s%60;
   if (h > 0) return `${h}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;
@@ -51,6 +60,8 @@ function SetupScreen({ onStart }) {
   const [examType,  setExamType]  = useState('WAEC');
   const [subject,   setSubject]   = useState(searchParams.get('subject') || 'Mathematics');
   const [topic,     setTopic]     = useState('All Topics');
+  const [year,      setYear]      = useState('All');
+  const [paperType, setPaperType] = useState('Any');
   const [count,     setCount]     = useState(40);
   const [duration,  setDuration]  = useState(60);
   const [mode,      setMode]      = useState('practice'); // practice | exam | speed
@@ -60,7 +71,7 @@ function SetupScreen({ onStart }) {
   const subjectTopics = TOPICS[subject] || TOPICS['default'];
 
   const handleStart = () => {
-    onStart({ examType, subject, topic, count, duration, mode, shuffle });
+    onStart({ examType, subject, topic, year, paperType, count, duration, mode, shuffle });
   };
 
   const labelS = { fontSize:11, fontWeight:700, color:'var(--text-muted)', textTransform:'uppercase', letterSpacing:'0.07em', marginBottom:6, display:'block' };
@@ -119,6 +130,26 @@ function SetupScreen({ onStart }) {
               <select value={topic} onChange={e => setTopic(e.target.value)}
                 style={{ width:'100%', padding:'10px 12px', borderRadius:'var(--r)', border:'1.5px solid var(--border-md)', background:'var(--bg-raised)', color:'var(--text-primary)', fontFamily:'var(--font-body)', fontSize:14, cursor:'pointer' }}>
                 {subjectTopics.map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </div>
+          </div>
+
+          {/* Year + Paper Type — narrows within an exam body/subject to a specific
+              past-paper year and section, using the structured import pipeline's
+              exam_body/paper_type/tags fields. */}
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:16 }}>
+            <div style={cardS}>
+              <label style={labelS}>Year</label>
+              <select value={year} onChange={e => setYear(e.target.value)}
+                style={{ width:'100%', padding:'10px 12px', borderRadius:'var(--r)', border:'1.5px solid var(--border-md)', background:'var(--bg-raised)', color:'var(--text-primary)', fontFamily:'var(--font-body)', fontSize:14, cursor:'pointer' }}>
+                {YEARS.map(y => <option key={y} value={y}>{y}</option>)}
+              </select>
+            </div>
+            <div style={cardS}>
+              <label style={labelS}>Paper Type</label>
+              <select value={paperType} onChange={e => setPaperType(e.target.value)}
+                style={{ width:'100%', padding:'10px 12px', borderRadius:'var(--r)', border:'1.5px solid var(--border-md)', background:'var(--bg-raised)', color:'var(--text-primary)', fontFamily:'var(--font-body)', fontSize:14, cursor:'pointer' }}>
+                {PAPER_TYPES.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
               </select>
             </div>
           </div>
@@ -210,6 +241,8 @@ function SetupScreen({ onStart }) {
                     ['Exam',      examType],
                     ['Subject',   subject],
                     ['Topic',     topic],
+                    ['Year',      year],
+                    ['Paper',     PAPER_TYPES.find(p => p.id === paperType)?.label || paperType],
                     ['Questions', count],
                     ['Duration',  `${duration} min`],
                     ['Mode',      mode.charAt(0).toUpperCase()+mode.slice(1)],
@@ -289,6 +322,8 @@ function PracticeEngine({ config, onFinish }) {
         limit: config.count,
         ...(config.topic !== 'All Topics' ? { topic: config.topic } : {}),
         ...(config.examType !== 'CUSTOM' ? { exam_type: config.examType } : {}),
+        ...(config.year && config.year !== 'All' ? { year: config.year } : {}),
+        ...(config.paperType && config.paperType !== 'Any' ? { paper_type: config.paperType } : {}),
       };
       const res = await axios.get(`${API}/questions`, { params });
       let qs = res.data.questions || [];

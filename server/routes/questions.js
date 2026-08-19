@@ -140,7 +140,7 @@ router.get('/', authenticate, async (req, res) => {
   try {
     const db = getDB();
     const {
-      subject_id, subject, difficulty, type, exam_type, year, search,
+      subject_id, subject, difficulty, type, exam_type, paper_type, year, search,
       page = 1, limit = 25,
     } = req.query;
 
@@ -154,7 +154,15 @@ router.get('/', authenticate, async (req, res) => {
     if (subject && subject !== 'All') { where += ' AND s.name = ?'; params.push(subject); }
     if (difficulty)  { where += ' AND q.difficulty = ?';  params.push(difficulty); }
     if (type)        { where += ' AND q.question_type = ?'; params.push(type); }
-    if (exam_type && exam_type !== 'CUSTOM') { where += ' AND JSON_CONTAINS(q.exam_types, ?)'; params.push(JSON.stringify(exam_type)); }
+    // Matches both the new structured `exam_body` column (questions published
+    // through the Milestone 3 pipeline) AND the older `exam_types` JSON array
+    // (manually-created questions from before that column existed) — so
+    // filtering keeps working across both without needing a data migration.
+    if (exam_type && exam_type !== 'CUSTOM') {
+      where += ' AND (q.exam_body = ? OR JSON_CONTAINS(q.exam_types, ?))';
+      params.push(exam_type, JSON.stringify(exam_type));
+    }
+    if (paper_type && paper_type !== 'All') { where += ' AND q.paper_type = ?'; params.push(paper_type); }
     if (year && year !== 'All Years' && year !== 'All') { where += ' AND JSON_CONTAINS(q.tags, ?)'; params.push(JSON.stringify(String(year))); }
     if (search)      { where += ' AND q.question_text LIKE ?'; params.push(`%${search}%`); }
 

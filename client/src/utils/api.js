@@ -131,6 +131,32 @@ export const importAPI = {
   templateURL: () => `${API}/import/template`,
 };
 
+// ── IMPORT BATCHES (Milestone 3/4 staged pipeline) ──────────────
+// Parallel to importAPI above — writes to staging tables and requires
+// explicit review + publish before questions go live. See ImportBatchesPage
+// and ImportBatchReviewPage.
+export const importBatchAPI = {
+  uploadZip: (file, { exam_body, year, subject_id, paper_type, expected_count }) => {
+    const fd = new FormData();
+    fd.append('zip', file);
+    if (exam_body) fd.append('exam_body', exam_body);
+    if (year) fd.append('year', year);
+    if (subject_id) fd.append('subject_id', subject_id);
+    if (paper_type) fd.append('paper_type', paper_type);
+    if (expected_count) fd.append('expected_count', expected_count);
+    return axios.post(`${API}/import/batches/zip`, fd, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 600000, // multi-pass pipeline (incl. Pass 5 re-verification) can take longer than the old flow
+    });
+  },
+  list: () => axios.get(`${API}/import/batches`),
+  get: (id) => axios.get(`${API}/import/batches/${id}`),
+  staged: (id, status) => axios.get(`${API}/import/batches/${id}/staged`, { params: status ? { status } : {} }),
+  updateStaged: (id, stagedId, data) => axios.put(`${API}/import/batches/${id}/staged/${stagedId}`, data),
+  publish: (id) => axios.post(`${API}/import/batches/${id}/publish`),
+  cancel: (id) => axios.delete(`${API}/import/batches/${id}`),
+};
+
 // ── SETTINGS ──────────────────────────────────────────────────
 export const settingsAPI = {
   get: () => axios.get(`${API}/settings`),
