@@ -199,6 +199,25 @@ export const syllabusAPI = {
   continueLearning: () => axios.get(`${API}/syllabus/continue-learning`),
 };
 
+// ── TEXTBOOK LIBRARY ──────────────────────────────────────────
+export const textbookAPI = {
+  upload: (file, meta) => {
+    const fd = new FormData();
+    fd.append('file', file);
+    Object.entries(meta).forEach(([k, v]) => { if (v) fd.append(k, v); });
+    return axios.post(`${API}/textbooks`, fd, { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 120000 });
+  },
+  list: (syllabusSubjectId) => axios.get(`${API}/textbooks`, { params: syllabusSubjectId ? { syllabus_subject_id: syllabusSubjectId } : {} }),
+  get: (id) => axios.get(`${API}/textbooks/${id}`),
+  delete: (id) => axios.delete(`${API}/textbooks/${id}`),
+  addChapter: (textbookId, data) => axios.post(`${API}/textbooks/${textbookId}/chapters`, data),
+  updateChapter: (chapterId, data) => axios.put(`${API}/textbooks/chapters/${chapterId}`, data),
+  deleteChapter: (chapterId) => axios.delete(`${API}/textbooks/chapters/${chapterId}`),
+  setChapterTopics: (chapterId, topicIds) => axios.put(`${API}/textbooks/chapters/${chapterId}/topics`, { topic_ids: topicIds }),
+  // Student-facing
+  recommendedReading: (topicId) => axios.get(`${API}/textbooks/topic/${topicId}/reading`),
+};
+
 // ── SETTINGS ──────────────────────────────────────────────────
 export const settingsAPI = {
   get: () => axios.get(`${API}/settings`),

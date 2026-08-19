@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
-import { syllabusAPI } from '../../utils/api';
+import { syllabusAPI, textbookAPI } from '../../utils/api';
 
 const sectionS = { marginBottom: 18 };
 const sectionTitleS = { fontSize: 13, fontWeight: 800, color: 'var(--brand-light)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.04em' };
@@ -18,8 +18,9 @@ export default function TopicLearningPage() {
   const [topic, setTopic] = useState(null);
   const [content, setContent] = useState(null);
   const [progress, setProgress] = useState(null);
-  const [loading, setLoading] = useState(true);
   const [reading, setReading] = useState(false);
+  const [recommendedReading, setRecommendedReading] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [completing, setCompleting] = useState(false);
 
   useEffect(() => { load(); }, [topicId]);
@@ -27,14 +28,16 @@ export default function TopicLearningPage() {
   const load = async () => {
     setLoading(true);
     try {
-      const [topicRes, contentRes, progressRes] = await Promise.all([
+      const [topicRes, contentRes, progressRes, readingRes] = await Promise.all([
         syllabusAPI.getTopic(topicId),
         syllabusAPI.getPublishedContent(topicId),
         syllabusAPI.topicProgress(topicId),
+        textbookAPI.recommendedReading(topicId),
       ]);
       setTopic(topicRes.data.topic);
       setContent(contentRes.data.content);
       setProgress(progressRes.data.progress);
+      setRecommendedReading(readingRes.data.reading || []);
     } catch {
       toast.error('Could not load this topic');
     } finally {
@@ -84,6 +87,23 @@ export default function TopicLearningPage() {
           </div>
         )}
       </div>
+
+      {recommendedReading.length > 0 && (
+        <div style={{ padding: 16, background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 'var(--r-xl)' }}>
+          <p style={sectionTitleS}>📖 Recommended Reading</p>
+          {recommendedReading.map(r => (
+            <div key={r.chapter_id} style={{ marginBottom: 10, paddingBottom: 10, borderBottom: '1px solid var(--border)' }}>
+              <p style={{ fontSize: 13, fontWeight: 700 }}>{r.textbook_title}</p>
+              {r.author && <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>{r.author}</p>}
+              <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 8 }}>Chapter: {r.chapter_title}</p>
+              <a href={r.url} target="_blank" rel="noreferrer"
+                style={{ display: 'inline-block', fontSize: 13, fontWeight: 700, color: 'var(--brand-light)', textDecoration: 'none' }}>
+                Read Textbook Section →
+              </a>
+            </div>
+          ))}
+        </div>
+      )}
 
       {!content ? (
         <div style={{ padding: 16, background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 'var(--r-xl)' }}>

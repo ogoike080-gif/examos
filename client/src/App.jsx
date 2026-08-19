@@ -23,6 +23,7 @@ import ImportPage         from './pages/admin/ImportPage';
 import ImportBatchesPage  from './pages/admin/ImportBatchesPage';
 import ImportBatchReviewPage from './pages/admin/ImportBatchReviewPage';
 import ExamBodyManagerPage from './pages/admin/ExamBodyManagerPage';
+import TextbookLibraryPage from './pages/admin/TextbookLibraryPage';
 import ExamPrepDashboard from './pages/candidate/ExamPrepDashboard';
 import ExamSelectionPage from './pages/candidate/ExamSelectionPage';
 import SubjectSelectionPage from './pages/candidate/SubjectSelectionPage';
@@ -140,6 +141,7 @@ export default function App() {
           <Route path="import/batches"     element={<ImportBatchesPage />} />
           <Route path="import/batches/:id" element={<ImportBatchReviewPage />} />
           <Route path="syllabus" element={<ExamBodyManagerPage />} />
+          <Route path="textbooks" element={<TextbookLibraryPage />} />
           <Route path="settings"           element={<SettingsPage />} />
         </Route>
 

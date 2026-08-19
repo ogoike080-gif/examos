@@ -578,6 +578,77 @@ async function createSchema() {
   `);
 
   console.log('✅ Exam preparation syllabus schema ready');
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // Textbook Library — Milestone C
+  // ═══════════════════════════════════════════════════════════════════════
+  // Scoping decision, stated plainly: automatic text extraction runs for PDF
+  // (pdf-parse) and DOCX (mammoth) so those formats get a searchable preview
+  // and page-accurate "Recommended Reading" links. PPTX and scanned-image
+  // textbooks are stored and readable as-is, but chapters for those formats
+  // are defined manually by the admin rather than auto-detected — a full
+  // PPTX text parser and page-level OCR pipeline for scanned books is a
+  // meaningfully bigger scope than this milestone, and admin-entered chapter
+  // titles/page numbers cover section 9's actual requirement (mapping
+  // chapters to topics) either way.
+
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS textbooks (
+      id VARCHAR(36) PRIMARY KEY,
+      title VARCHAR(500) NOT NULL,
+      author VARCHAR(255) NULL,
+      description TEXT NULL,
+      file_type ENUM('pdf','docx','pptx','txt','image') NOT NULL,
+      file_path VARCHAR(500) NOT NULL,
+      file_size_bytes INT NULL,
+      page_count INT NULL,
+      extracted_text LONGTEXT NULL,
+      extraction_status ENUM('not_applicable','pending','done','failed') DEFAULT 'not_applicable',
+      exam_body_id VARCHAR(36) NULL,
+      examination_id VARCHAR(36) NULL,
+      syllabus_subject_id VARCHAR(36) NULL,
+      uploaded_by VARCHAR(36) NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      FOREIGN KEY (exam_body_id) REFERENCES exam_bodies(id) ON DELETE SET NULL,
+      FOREIGN KEY (examination_id) REFERENCES examinations(id) ON DELETE SET NULL,
+      FOREIGN KEY (syllabus_subject_id) REFERENCES syllabus_subjects(id) ON DELETE SET NULL,
+      FOREIGN KEY (uploaded_by) REFERENCES users(id) ON DELETE SET NULL,
+      INDEX idx_textbook_subject (syllabus_subject_id)
+    )
+  `);
+
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS textbook_chapters (
+      id VARCHAR(36) PRIMARY KEY,
+      textbook_id VARCHAR(36) NOT NULL,
+      title VARCHAR(500) NOT NULL,
+      start_page INT NULL,
+      end_page INT NULL,
+      display_order INT DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (textbook_id) REFERENCES textbooks(id) ON DELETE CASCADE,
+      INDEX idx_chapter_textbook (textbook_id)
+    )
+  `);
+
+  // Many-to-many: one chapter can cover several topics (e.g. a single
+  // "Organic Chemistry" chapter mapping to Hydrocarbons, Alkanes, Alkenes),
+  // and one topic could reasonably draw from chapters in more than one book.
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS textbook_topic_links (
+      id VARCHAR(36) PRIMARY KEY,
+      chapter_id VARCHAR(36) NOT NULL,
+      topic_id VARCHAR(36) NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (chapter_id) REFERENCES textbook_chapters(id) ON DELETE CASCADE,
+      FOREIGN KEY (topic_id) REFERENCES syllabus_topics(id) ON DELETE CASCADE,
+      UNIQUE KEY uniq_chapter_topic (chapter_id, topic_id),
+      INDEX idx_link_topic (topic_id)
+    )
+  `);
+
+  console.log('✅ Textbook library schema ready');
 }
 
 module.exports = { initDB, getDB };

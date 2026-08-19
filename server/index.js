@@ -21,6 +21,7 @@ const subjectRoutes  = require('./routes/subjects');
 const importRoutes   = require('./routes/import');
 const importBatchesRoutes = require('./routes/importBatches');
 const syllabusRoutes = require('./routes/syllabus');
+const textbooksRoutes = require('./routes/textbooks');
 const settingsRoutes = require('./routes/settings');
 const resultsRoutes   = require('./routes/results');
 const aiRoutes        = require('./routes/ai');
@@ -148,6 +149,7 @@ app.use('/api/import',     importRoutes);
 app.use('/api/import/batches', importBatchesRoutes);
 // Exam Preparation Learning System — Exam Body Manager + topic content
 app.use('/api/syllabus', syllabusRoutes);
+app.use('/api/textbooks', textbooksRoutes);
 app.use('/api/settings',   settingsRoutes);
 app.use('/api/results',  resultsRoutes);
 app.use('/api/ai',       aiRoutes);
