@@ -158,6 +158,7 @@ export const importBatchAPI = {
   pages: (id) => axios.get(`${API}/import/batches/${id}/pages`),
   retryPage: (id, pageId) => axios.post(`${API}/import/batches/${id}/pages/${pageId}/retry`, {}, { timeout: 120000 }),
   fillMissing: (id, number, data) => axios.post(`${API}/import/batches/${id}/missing/${number}`, data),
+  cleanMathNotation: (id) => axios.post(`${API}/import/batches/${id}/clean-math-notation`),
 };
 
 // ── EXAM PREPARATION SYLLABUS (Exam Body Manager) ────────────────
@@ -189,33 +190,6 @@ export const syllabusAPI = {
   getContent: (topicId) => axios.get(`${API}/syllabus/topics/${topicId}/content`),
   generateContent: (topicId) => axios.post(`${API}/syllabus/topics/${topicId}/content/generate`, {}, { timeout: 60000 }),
   saveContent: (topicId, data) => axios.put(`${API}/syllabus/topics/${topicId}/content`, data),
-
-  // Student-facing
-  getPublishedContent: (topicId) => axios.get(`${API}/syllabus/topics/${topicId}/published-content`),
-  subjectProgress: (subjectId) => axios.get(`${API}/syllabus/progress/subject/${subjectId}`),
-  topicProgress: (topicId) => axios.get(`${API}/syllabus/progress/topic/${topicId}`),
-  startTopic: (topicId) => axios.post(`${API}/syllabus/progress/topic/${topicId}/start`),
-  completeTopic: (topicId) => axios.post(`${API}/syllabus/progress/topic/${topicId}/complete`),
-  continueLearning: () => axios.get(`${API}/syllabus/continue-learning`),
-};
-
-// ── TEXTBOOK LIBRARY ──────────────────────────────────────────
-export const textbookAPI = {
-  upload: (file, meta) => {
-    const fd = new FormData();
-    fd.append('file', file);
-    Object.entries(meta).forEach(([k, v]) => { if (v) fd.append(k, v); });
-    return axios.post(`${API}/textbooks`, fd, { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 120000 });
-  },
-  list: (syllabusSubjectId) => axios.get(`${API}/textbooks`, { params: syllabusSubjectId ? { syllabus_subject_id: syllabusSubjectId } : {} }),
-  get: (id) => axios.get(`${API}/textbooks/${id}`),
-  delete: (id) => axios.delete(`${API}/textbooks/${id}`),
-  addChapter: (textbookId, data) => axios.post(`${API}/textbooks/${textbookId}/chapters`, data),
-  updateChapter: (chapterId, data) => axios.put(`${API}/textbooks/chapters/${chapterId}`, data),
-  deleteChapter: (chapterId) => axios.delete(`${API}/textbooks/chapters/${chapterId}`),
-  setChapterTopics: (chapterId, topicIds) => axios.put(`${API}/textbooks/chapters/${chapterId}/topics`, { topic_ids: topicIds }),
-  // Student-facing
-  recommendedReading: (topicId) => axios.get(`${API}/textbooks/topic/${topicId}/reading`),
 };
 
 // ── SETTINGS ──────────────────────────────────────────────────

@@ -28,6 +28,7 @@ const { getDB } = require('../models/db');
 const { authenticate, authorize } = require('../middleware/auth');
 const { extractQuestionsFromImage, reverifyLowConfidenceQuestion } = require('../ai/questionGenerator');
 const { computeConfidence } = require('../services/confidenceScoring');
+const { cleanQuestionFields } = require('../utils/mathNotation');
 
 const router = express.Router();
 
@@ -493,6 +494,44 @@ router.get('/:id/staged', authenticate, authorize('superadmin', 'admin', 'examin
       source_page_url: r.source_file_path ? `/uploads/source-papers/${r.source_file_path}` : null,
     }));
     res.json({ staged });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// POST /api/import/batches/:id/clean-math-notation
+// Retroactive cleanup for batches staged before mathNotation.js was wired into
+// extractQuestionsFromImage — new batches come out clean automatically now,
+// this is only needed for older ones still sitting in review with raw
+// $\LaTeX$-style markup. Scoped to this one batch, safe to run more than once.
+router.post('/:id/clean-math-notation', authenticate, authorize('superadmin', 'admin', 'examiner'), async (req, res) => {
+  try {
+    const db = getDB();
+    const [rows] = await db.execute(
+      'SELECT id, question_text, options, explanation FROM staged_questions WHERE import_batch_id=?',
+      [req.params.id]
+    );
+
+    let updated = 0;
+    for (const row of rows) {
+      const cleaned = cleanQuestionFields({
+        question_text: row.question_text,
+        options: row.options, // JSON column — mysql2 already gives us a real array here
+        explanation: row.explanation,
+      });
+
+      const textChanged = cleaned.question_text !== row.question_text;
+      const optionsChanged = JSON.stringify(cleaned.options) !== JSON.stringify(row.options);
+      const explanationChanged = cleaned.explanation !== row.explanation;
+
+      if (textChanged || optionsChanged || explanationChanged) {
+        await db.execute(
+          'UPDATE staged_questions SET question_text=?, options=?, explanation=? WHERE id=?',
+          [cleaned.question_text, JSON.stringify(cleaned.options), cleaned.explanation, row.id]
+        );
+        updated++;
+      }
+    }
+
+    res.json({ message: `Cleaned ${updated} of ${rows.length} question(s) in this batch`, scanned: rows.length, updated });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

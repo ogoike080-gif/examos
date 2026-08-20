@@ -154,6 +154,20 @@ export default function ImportBatchReviewPage() {
     }
   };
 
+  const [cleaning, setCleaning] = useState(false);
+  const cleanNotation = async () => {
+    setCleaning(true);
+    try {
+      const res = await importBatchAPI.cleanMathNotation(id);
+      toast.success(res.data.message);
+      load();
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Cleanup failed');
+    } finally {
+      setCleaning(false);
+    }
+  };
+
   const publish = async () => {
     setPublishing(true);
     try {
@@ -188,18 +202,32 @@ export default function ImportBatchReviewPage() {
             {' · '}Status: <strong style={{ color: 'var(--text-primary)' }}>{batch.status}</strong>
           </p>
         </div>
-        <button
-          onClick={publish}
-          disabled={publishing || batch.status === 'published' || counts.verified === 0}
-          style={{
-            padding: '10px 20px', borderRadius: 'var(--r-lg)', border: 'none', fontWeight: 700, fontSize: 14,
-            background: publishing || counts.verified === 0 ? 'var(--bg-raised)' : 'var(--success)',
-            color: publishing || counts.verified === 0 ? 'var(--text-muted)' : '#fff',
-            cursor: publishing || counts.verified === 0 ? 'not-allowed' : 'pointer',
-          }}
-        >
-          {publishing ? 'Publishing…' : `Publish ${counts.verified} Verified Question${counts.verified !== 1 ? 's' : ''}`}
-        </button>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+          <button
+            onClick={cleanNotation}
+            disabled={cleaning}
+            title="Fixes raw $\LaTeX$-style math markup (older batches only — new batches come out clean automatically)"
+            style={{
+              padding: '10px 16px', borderRadius: 'var(--r-lg)', border: '1.5px solid var(--border-md)', fontWeight: 700, fontSize: 13,
+              background: 'var(--bg-raised)', color: cleaning ? 'var(--text-muted)' : 'var(--text-secondary)',
+              cursor: cleaning ? 'not-allowed' : 'pointer',
+            }}
+          >
+            {cleaning ? 'Cleaning…' : '🧹 Clean Math Notation'}
+          </button>
+          <button
+            onClick={publish}
+            disabled={publishing || batch.status === 'published' || counts.verified === 0}
+            style={{
+              padding: '10px 20px', borderRadius: 'var(--r-lg)', border: 'none', fontWeight: 700, fontSize: 14,
+              background: publishing || counts.verified === 0 ? 'var(--bg-raised)' : 'var(--success)',
+              color: publishing || counts.verified === 0 ? 'var(--text-muted)' : '#fff',
+              cursor: publishing || counts.verified === 0 ? 'not-allowed' : 'pointer',
+            }}
+          >
+            {publishing ? 'Publishing…' : `Publish ${counts.verified} Verified Question${counts.verified !== 1 ? 's' : ''}`}
+          </button>
+        </div>
       </div>
 
       {batch.number_gaps && parseArr(batch.number_gaps).length > 0 && (
