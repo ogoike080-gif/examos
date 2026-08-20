@@ -353,16 +353,31 @@ router.post('/clean-math-notation', authenticate, authorize('superadmin', 'admin
       params
     );
 
-    let updated = 0;
+    let updated = 0, skipped = 0;
     for (const row of rows) {
       const cleanedText = cleanMathNotation(row.question_text);
-      let options;
-      try { options = JSON.parse(row.options || '[]'); } catch { options = []; }
-      const cleanedOptions = options.map(o => typeof o === 'string' ? cleanMathNotation(o) : o);
+
+      // `options` is a native MySQL JSON column, so mysql2 already returns it
+      // as a parsed array — NOT a string. Calling JSON.parse() on an array
+      // silently fails (array.toString() isn't valid JSON), which is exactly
+      // the bug that wiped options to [] before. Never guess here: if it's
+      // not already an array and isn't a parseable string, skip the row
+      // entirely rather than writing anything back.
+      let originalOptions;
+      if (Array.isArray(row.options)) {
+        originalOptions = row.options;
+      } else if (typeof row.options === 'string') {
+        try { originalOptions = JSON.parse(row.options || '[]'); }
+        catch { skipped++; continue; }
+      } else {
+        skipped++; continue;
+      }
+
+      const cleanedOptions = originalOptions.map(o => typeof o === 'string' ? cleanMathNotation(o) : o);
       const cleanedExplanation = row.explanation ? cleanMathNotation(row.explanation) : row.explanation;
 
       const textChanged = cleanedText !== row.question_text;
-      const optionsChanged = JSON.stringify(cleanedOptions) !== row.options;
+      const optionsChanged = JSON.stringify(cleanedOptions) !== JSON.stringify(originalOptions);
       const explanationChanged = cleanedExplanation !== row.explanation;
 
       if (textChanged || optionsChanged || explanationChanged) {
@@ -374,9 +389,56 @@ router.post('/clean-math-notation', authenticate, authorize('superadmin', 'admin
       }
     }
 
-    res.json({ message: `Cleaned ${updated} of ${rows.length} question(s) scanned`, scanned: rows.length, updated });
+    res.json({ message: `Cleaned ${updated} of ${rows.length} question(s) scanned (${skipped} skipped, unparseable)`, scanned: rows.length, updated, skipped });
   } catch (err) {
     console.error('clean-math-notation error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/questions/restore-from-staging — emergency recovery for the
+// clean-math-notation data-loss bug above. Any published question that came
+// through the batch import pipeline still has its original, untouched
+// options/correct_answers sitting in staged_questions (that table was never
+// touched by the buggy script). This copies them back for any live question
+// whose options are currently empty. Does NOT help questions imported
+// through the older, non-staged Import page — those have no backup copy
+// anywhere and need to be re-imported from the original source file.
+router.post('/restore-from-staging', authenticate, authorize('superadmin', 'admin'), async (req, res) => {
+  try {
+    const db = getDB();
+    const [rows] = await db.execute(
+      `SELECT q.id, q.options as live_options, sq.options as staged_options, sq.correct_answers as staged_correct
+       FROM questions q
+       JOIN staged_questions sq ON sq.published_question_id = q.id
+       WHERE q.is_active = TRUE`
+    );
+
+    let restored = 0, alreadyFine = 0;
+    for (const row of rows) {
+      let liveOptions;
+      if (Array.isArray(row.live_options)) liveOptions = row.live_options;
+      else { try { liveOptions = JSON.parse(row.live_options || '[]'); } catch { liveOptions = []; } }
+
+      if (liveOptions.length > 0) { alreadyFine++; continue; }
+
+      let stagedOptions = Array.isArray(row.staged_options) ? row.staged_options
+        : (() => { try { return JSON.parse(row.staged_options || '[]'); } catch { return []; } })();
+      let stagedCorrect = Array.isArray(row.staged_correct) ? row.staged_correct
+        : (() => { try { return JSON.parse(row.staged_correct || '[]'); } catch { return []; } })();
+
+      if (stagedOptions.length === 0) continue; // staging copy also empty — nothing to restore from
+
+      await db.execute(
+        'UPDATE questions SET options=?, correct_answers=? WHERE id=?',
+        [JSON.stringify(stagedOptions), JSON.stringify(stagedCorrect), row.id]
+      );
+      restored++;
+    }
+
+    res.json({ message: `Restored ${restored} question(s) from their staging backup`, restored, already_fine: alreadyFine, checked: rows.length });
+  } catch (err) {
+    console.error('restore-from-staging error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
