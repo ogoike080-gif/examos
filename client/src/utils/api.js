@@ -174,6 +174,7 @@ export const diagramRepairAPI = {
       timeout: 600000,
     });
   },
+};
 
 // ── EXAM PREPARATION SYLLABUS (Exam Body Manager) ────────────────
 export const syllabusAPI = {
