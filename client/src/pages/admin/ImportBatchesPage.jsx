@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
-import { importBatchAPI, subjectAPI } from '../../utils/api';
+import { importBatchAPI, subjectAPI, diagramRepairAPI } from '../../utils/api';
 
 const EXAM_BODIES = ['WAEC', 'JAMB', 'NECO', 'NABTEB', 'BECE', 'Post-UTME', 'General'];
 const PAPER_TYPES = ['objective', 'theory', 'essay', 'practical', 'combined'];
@@ -21,11 +21,14 @@ const inputS = { width: '100%', padding: '10px 12px', borderRadius: 'var(--r)', 
 export default function ImportBatchesPage() {
   const navigate = useNavigate();
   const fileRef = useRef(null);
+  const repairFileRef = useRef(null);
   const [subjects, setSubjects] = useState([]);
   const [batches, setBatches] = useState([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [uploadStage, setUploadStage] = useState('');
+  const [repairing, setRepairing] = useState(false);
+  const [repairConfig, setRepairConfig] = useState({ exam_body: 'WAEC', year: '', subject_id: '' });
   const [config, setConfig] = useState({
     exam_body: 'WAEC', year: new Date().getFullYear(), subject_id: '',
     paper_type: 'objective', expected_count: '',
@@ -69,6 +72,31 @@ export default function ImportBatchesPage() {
       setUploading(false);
       setUploadStage('');
       if (fileRef.current) fileRef.current.value = '';
+    }
+  };
+
+  const handleRepair = async (file) => {
+    if (!file) return;
+    if (!repairConfig.exam_body || !repairConfig.year) {
+      toast.error('Fill in Exam Body and Year first — needed to know which live questions to match against');
+      return;
+    }
+    setRepairing(true);
+    try {
+      const res = await diagramRepairAPI.repair(file, repairConfig);
+      const d = res.data;
+      toast.success(
+        `${d.message} · ${d.already_fine} already fine · ${d.no_match} unmatched` +
+        (d.pages_failed ? ` · ${d.pages_failed} page(s) failed` : '')
+      );
+      if (d.unmatched_sample?.length) {
+        console.log('Unmatched questions (first 10):', d.unmatched_sample);
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Diagram repair failed');
+    } finally {
+      setRepairing(false);
+      if (repairFileRef.current) repairFileRef.current.value = '';
     }
   };
 
@@ -139,6 +167,43 @@ export default function ImportBatchesPage() {
         {uploading && (
           <p style={{ marginTop: 12, fontSize: 13, color: 'var(--text-muted)' }}>{uploadStage}</p>
         )}
+      </div>
+
+      {/* Diagram repair — for already-published questions whose diagram file
+          was lost before a persistent volume was attached. Re-processes the
+          original photos and patches existing rows in place; nothing new
+          gets inserted. */}
+      <div style={{ ...cardS, borderColor: 'var(--warning)' }}>
+        <label style={labelS}>🔧 Repair Broken Diagrams</label>
+        <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12 }}>
+          If diagrams show broken (404) on already-published questions — usually from files lost before a persistent volume was attached —
+          upload the same original photos here. This matches them back to the existing live questions and fixes just the image, without creating duplicates.
+        </p>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 12 }}>
+          <div>
+            <label style={labelS}>Exam Body</label>
+            <select style={inputS} value={repairConfig.exam_body} onChange={e => setRepairConfig(c => ({ ...c, exam_body: e.target.value }))}>
+              {['WAEC','JAMB','NECO','NABTEB','BECE','Post-UTME','General'].map(b => <option key={b} value={b}>{b}</option>)}
+            </select>
+          </div>
+          <div>
+            <label style={labelS}>Year</label>
+            <input style={inputS} type="number" placeholder="e.g. 1988" value={repairConfig.year} onChange={e => setRepairConfig(c => ({ ...c, year: e.target.value }))} />
+          </div>
+          <div>
+            <label style={labelS}>Subject (optional, narrows matching)</label>
+            <select style={inputS} value={repairConfig.subject_id} onChange={e => setRepairConfig(c => ({ ...c, subject_id: e.target.value }))}>
+              <option value="">— Any —</option>
+              {subjects.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
+          </div>
+        </div>
+        <input ref={repairFileRef} type="file" accept=".zip" disabled={repairing}
+          onChange={e => handleRepair(e.target.files[0])} style={{ display: 'none' }} />
+        <button onClick={() => repairFileRef.current?.click()} disabled={repairing}
+          style={{ padding: '10px 18px', borderRadius: 'var(--r-lg)', border: 'none', background: repairing ? 'var(--bg-raised)' : 'var(--warning)', color: repairing ? 'var(--text-muted)' : '#000', fontWeight: 700, cursor: repairing ? 'not-allowed' : 'pointer' }}>
+          {repairing ? 'Repairing…' : 'Choose .zip and Repair Diagrams'}
+        </button>
       </div>
 
       {/* Batch list */}

@@ -5,8 +5,10 @@ const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 const { getDB } = require('../models/db');
 const { authenticate, authorize } = require('../middleware/auth');
-const { generateQuestionsWithAI } = require('../ai/questionGenerator');
-const { cleanMathNotation } = require('../utils/mathNotation');
+const { generateQuestionsWithAI, extractQuestionsFromImage } = require('../ai/questionGenerator');
+const { cleanMathNotation, cleanQuestionFields } = require('../utils/mathNotation');
+const AdmZip = require('adm-zip');
+const sharp = require('sharp');
 
 const router = express.Router();
 
@@ -377,6 +379,146 @@ router.post('/clean-math-notation', authenticate, authorize('superadmin', 'admin
     console.error('clean-math-notation error:', err.message);
     res.status(500).json({ error: err.message });
   }
+});
+
+// ── Diagram repair ───────────────────────────────────────────────────────
+// For questions already LIVE in the question bank whose media_url points to
+// a file that no longer exists (from before a persistent volume was
+// attached), a normal re-import doesn't help — duplicate-text detection
+// would just skip these as already-existing and never touch their broken
+// media_url. This endpoint re-processes the original photos and PATCHES the
+// existing rows' media_url directly, matched by question_number (primary)
+// or normalized question_text (fallback) within the given exam scope —
+// nothing gets inserted as a new row.
+
+const DIAGRAMS_DIR = path.join(__dirname, '..', 'uploads', 'diagrams');
+
+function normaliseText(t) {
+  return String(t || '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+async function cropDiagram(buffer, box) {
+  if (!box || [box.x_min, box.y_min, box.x_max, box.y_max].some(v => typeof v !== 'number')) return null;
+  try {
+    const img = sharp(buffer);
+    const meta = await img.metadata();
+    if (!meta.width || !meta.height) return null;
+    const pad = 3;
+    const xMin = Math.max(0, box.x_min - pad);
+    const yMin = Math.max(0, box.y_min - pad);
+    const xMax = Math.min(100, box.x_max + pad);
+    const yMax = Math.min(100, box.y_max + pad);
+    if (xMax <= xMin || yMax <= yMin) return null;
+    const left = Math.round((xMin / 100) * meta.width);
+    const top = Math.round((yMin / 100) * meta.height);
+    const width = Math.round(((xMax - xMin) / 100) * meta.width);
+    const height = Math.round(((yMax - yMin) / 100) * meta.height);
+    if (width < 20 || height < 20) return null;
+    fs.mkdirSync(DIAGRAMS_DIR, { recursive: true });
+    const filename = `${uuidv4()}.jpg`;
+    await sharp(buffer).extract({ left, top, width, height }).jpeg({ quality: 88 }).toFile(path.join(DIAGRAMS_DIR, filename));
+    return `/uploads/diagrams/${filename}`;
+  } catch (err) {
+    console.error('repair diagram crop failed:', err.message);
+    return null;
+  }
+}
+
+const zipUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 60 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const ok = file.mimetype === 'application/zip' || file.mimetype === 'application/x-zip-compressed'
+      || file.originalname.toLowerCase().endsWith('.zip');
+    if (ok) cb(null, true); else cb(new Error('Only .zip files are allowed here'));
+  },
+});
+
+// POST /api/questions/repair-diagrams
+router.post('/repair-diagrams', authenticate, authorize('superadmin', 'admin'), (req, res) => {
+  zipUpload.single('zip')(req, res, async (err) => {
+    if (err) return res.status(400).json({ error: err.message || 'Upload failed' });
+    if (!req.file) return res.status(400).json({ error: 'No zip file provided' });
+
+    const { exam_body, year, subject_id } = req.body;
+    if (!exam_body || !year) return res.status(400).json({ error: 'exam_body and year are required, to scope which live questions this can match against' });
+
+    let entries;
+    try {
+      const zip = new AdmZip(req.file.buffer);
+      entries = zip.getEntries().filter(e => {
+        if (e.isDirectory) return false;
+        const name = e.entryName.toLowerCase();
+        if (name.includes('__macosx') || name.split('/').pop().startsWith('.')) return false;
+        return /\.(jpe?g|png|webp)$/.test(name);
+      });
+    } catch {
+      return res.status(400).json({ error: "Could not read that zip file — make sure it's a valid .zip archive of photos" });
+    }
+    if (entries.length === 0) return res.status(400).json({ error: 'No JPG/PNG/WEBP photos found inside that zip' });
+
+    const db = getDB();
+    let where = '1=1'; const params = [];
+    where += ' AND (exam_body = ? OR JSON_CONTAINS(exam_types, ?))'; params.push(exam_body, JSON.stringify(exam_body));
+    where += ' AND JSON_CONTAINS(tags, ?)'; params.push(JSON.stringify(String(year)));
+    if (subject_id) { where += ' AND subject_id = ?'; params.push(subject_id); }
+    const [liveRows] = await db.execute(
+      `SELECT id, question_number, question_text, media_url FROM questions WHERE ${where} AND is_active = TRUE`,
+      params
+    );
+    const byNumber = new Map();
+    const byText = new Map();
+    for (const r of liveRows) {
+      if (r.question_number !== null && r.question_number !== undefined) byNumber.set(r.question_number, r);
+      byText.set(normaliseText(r.question_text), r);
+    }
+
+    const mimeFor = (name) => name.endsWith('.png') ? 'image/png' : name.endsWith('.webp') ? 'image/webp' : 'image/jpeg';
+
+    let repaired = 0, noMatch = 0, noDiagram = 0, alreadyFine = 0, pagesFailed = 0;
+    const unmatched = [];
+
+    for (const entry of entries) {
+      const filename = entry.entryName.split('/').pop();
+      try {
+        const buffer = entry.getData();
+        const result = await extractQuestionsFromImage({ imageBase64: buffer.toString('base64'), mediaType: mimeFor(filename.toLowerCase()) });
+        const pageQuestions = (result.questions || []).filter(q => q.question_text?.trim());
+
+        for (const q of pageQuestions) {
+          const cleaned = cleanQuestionFields(q);
+          let match = (q.number !== undefined && q.number !== null) ? byNumber.get(q.number) : null;
+          if (!match) match = byText.get(normaliseText(cleaned.question_text));
+
+          if (!match) { noMatch++; unmatched.push({ filename, number: q.number ?? null, text: cleaned.question_text.slice(0, 60) }); continue; }
+          if (!q.has_diagram) { noDiagram++; continue; }
+
+          // Skip re-cropping if this row's media_url already resolves —
+          // avoids unnecessary AI/crop work on rows that were never broken.
+          if (match.media_url) {
+            const existingPath = path.join(__dirname, '..', match.media_url.replace(/^\//, ''));
+            if (fs.existsSync(existingPath)) { alreadyFine++; continue; }
+          }
+
+          const diagramUrl = await cropDiagram(buffer, q.diagram_box);
+          if (!diagramUrl) { noMatch++; continue; }
+
+          await db.execute('UPDATE questions SET media_url=? WHERE id=?', [diagramUrl, match.id]);
+          repaired++;
+        }
+      } catch (photoErr) {
+        console.error(`repair-diagrams photo error (${filename}):`, photoErr.message);
+        pagesFailed++;
+      }
+    }
+
+    res.json({
+      message: `Repaired ${repaired} diagram(s)`,
+      repaired, already_fine: alreadyFine, no_diagram_needed: noDiagram,
+      no_match: noMatch, pages_failed: pagesFailed,
+      unmatched_sample: unmatched.slice(0, 10),
+    });
+  });
 });
 
 module.exports = router;
