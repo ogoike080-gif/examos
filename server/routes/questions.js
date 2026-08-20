@@ -6,6 +6,7 @@ const { v4: uuidv4 } = require('uuid');
 const { getDB } = require('../models/db');
 const { authenticate, authorize } = require('../middleware/auth');
 const { generateQuestionsWithAI } = require('../ai/questionGenerator');
+const { cleanMathNotation } = require('../utils/mathNotation');
 
 const router = express.Router();
 
@@ -326,6 +327,55 @@ router.delete('/:id', authenticate, authorize('superadmin', 'admin'), async (req
   } catch (err) {
     console.error('DELETE /questions/:id error:', err.message);
     res.status(500).json({ error: 'Failed to delete question' });
+  }
+});
+
+// POST /api/questions/clean-math-notation — one-time cleanup for questions
+// already imported before the extraction pipeline started normalizing LaTeX
+// markup ($x^2$, \frac{}{}, \circ) into plain text. Scans every active
+// question, cleans question_text/options/explanation, and only writes back
+// rows that actually changed. Safe to run repeatedly — already-clean rows
+// are no-ops. Optionally scoped to one subject/exam_body via query params
+// so it can be run narrowly (e.g. just the WAEC 1988 batch) instead of the
+// whole bank at once.
+router.post('/clean-math-notation', authenticate, authorize('superadmin', 'admin'), async (req, res) => {
+  try {
+    const db = getDB();
+    const { subject_id, exam_body } = req.query;
+    let where = 'is_active = TRUE'; const params = [];
+    if (subject_id) { where += ' AND subject_id=?'; params.push(subject_id); }
+    if (exam_body)  { where += ' AND exam_body=?'; params.push(exam_body); }
+
+    const [rows] = await db.execute(
+      `SELECT id, question_text, options, explanation FROM questions WHERE ${where}`,
+      params
+    );
+
+    let updated = 0;
+    for (const row of rows) {
+      const cleanedText = cleanMathNotation(row.question_text);
+      let options;
+      try { options = JSON.parse(row.options || '[]'); } catch { options = []; }
+      const cleanedOptions = options.map(o => typeof o === 'string' ? cleanMathNotation(o) : o);
+      const cleanedExplanation = row.explanation ? cleanMathNotation(row.explanation) : row.explanation;
+
+      const textChanged = cleanedText !== row.question_text;
+      const optionsChanged = JSON.stringify(cleanedOptions) !== row.options;
+      const explanationChanged = cleanedExplanation !== row.explanation;
+
+      if (textChanged || optionsChanged || explanationChanged) {
+        await db.execute(
+          'UPDATE questions SET question_text=?, options=?, explanation=? WHERE id=?',
+          [cleanedText, JSON.stringify(cleanedOptions), cleanedExplanation, row.id]
+        );
+        updated++;
+      }
+    }
+
+    res.json({ message: `Cleaned ${updated} of ${rows.length} question(s) scanned`, scanned: rows.length, updated });
+  } catch (err) {
+    console.error('clean-math-notation error:', err.message);
+    res.status(500).json({ error: err.message });
   }
 });
 

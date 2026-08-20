@@ -1,4 +1,5 @@
 const { GoogleGenAI } = require('@google/genai');
+const { cleanQuestionFields } = require('../utils/mathNotation');
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 const MODEL = 'gemini-3.1-flash-lite';
@@ -108,7 +109,7 @@ Respond in JSON only (no markdown, no backticks):
   });
 
   const data = extractJSON(response.text);
-  return data.questions;
+  return Array.isArray(data.questions) ? data.questions.map(cleanQuestionFields) : data.questions;
 }
 
 /**
@@ -267,7 +268,15 @@ Rules:
     });
   }
 
-  return extractJSON(response.text);
+  const parsed = extractJSON(response.text);
+  // Normalize LaTeX-style math markup ($x^2$, \frac{}{}, \circ) the model
+  // sometimes outputs into plain readable text — the app has no LaTeX
+  // renderer, so raw markup would otherwise show verbatim to students.
+  return {
+    ...parsed,
+    questions: Array.isArray(parsed.questions) ? parsed.questions.map(cleanQuestionFields) : parsed.questions,
+    answers: Array.isArray(parsed.answers) ? parsed.answers.map(cleanQuestionFields) : parsed.answers,
+  };
 }
 
 /**
@@ -352,7 +361,8 @@ Rules:
         },
       ],
     });
-    return extractJSON(response.text);
+    const verdict = extractJSON(response.text);
+    return cleanQuestionFields(verdict);
   } catch (err) {
     console.error('Pass 5 re-verification failed:', err.message);
     // Fail safe: report nothing changed rather than crash the batch —
