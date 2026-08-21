@@ -1,5 +1,5 @@
 const { GoogleGenAI } = require('@google/genai');
-const { cleanQuestionFields } = require('../utils/mathNotation');
+const { cleanQuestionFields, cleanMathNotation } = require('../utils/mathNotation');
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 const MODEL = 'gemini-3.1-flash-lite';
@@ -416,6 +416,57 @@ Keep each field factually careful — do not invent formulas, dates, or claims y
   return extractJSON(response.text);
 }
 
+/**
+ * Attempts to actually SOLVE an objective question using the model's own
+ * reasoning — distinct from reverifyLowConfidenceQuestion, which only
+ * re-reads the page and deliberately refuses to guess an unmarked answer.
+ * This is for questions where no answer key was found anywhere in the
+ * source pages, so there's nothing to "re-read" — the only way to get an
+ * answer is genuine computation/reasoning from the problem itself.
+ *
+ * Always labeled distinctly in review_notes by the caller as AI-derived,
+ * never auto-published as verified — a human confirms computational
+ * correctness before it goes live, same principle as section 20's content
+ * labeling for the exam-prep learning system.
+ */
+async function solveObjectiveQuestion({ question_text, options, subject }) {
+  if (!Array.isArray(options) || options.length < 2) {
+    return { solvable: false, reason: 'Not enough options to solve against' };
+  }
+  const prompt = `Solve this ${subject || ''} exam question step by step, then pick the correct option.
+
+Question: ${question_text}
+
+Options:
+${options.map((o, i) => `${String.fromCharCode(65 + i)}. ${o}`).join('\n')}
+
+Respond in JSON only (no markdown, no backticks):
+{
+  "solvable": true|false,
+  "correct_answer_letter": "A|B|C|D|E|null",
+  "solution_steps": "concise step-by-step working showing how you got the answer",
+  "confidence": "high|medium|low"
+}
+
+Rules:
+- Only set solvable: true if you can actually work through the problem and confidently arrive at one of the given options.
+- If the question is ambiguous, relies on a diagram/table you can't see from text alone, or none of the options match your computed answer, set solvable: false and explain why in solution_steps.
+- Show real working, not just the answer — this will be reviewed by a teacher before students see it.`;
+
+  try {
+    const response = await ai.models.generateContent({
+      model: MODEL,
+      contents: prompt,
+    });
+    const result = extractJSON(response.text);
+    if (result.solution_steps) result.solution_steps = cleanMathNotation(result.solution_steps);
+    return result;
+  } catch (err) {
+    console.error('solveObjectiveQuestion failed:', err.message);
+    return { solvable: false, reason: err.message };
+  }
+}
+
 module.exports = {
   analyzeProctoringEvent,
   generateQuestionsWithAI,
@@ -424,5 +475,6 @@ module.exports = {
   extractQuestionsFromImage,
   reverifyLowConfidenceQuestion,
   generateTopicContent,
+  solveObjectiveQuestion,
   chatWithStudyAssistant,
 };

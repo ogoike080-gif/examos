@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
-import { importBatchAPI } from '../../utils/api';
+import { importBatchAPI, syllabusAPI } from '../../utils/api';
 
 const STATUS_META = {
   verified:        { label: 'Verified',        bg: 'var(--success-dim)', fg: 'var(--success)' },
@@ -13,7 +13,6 @@ const STATUS_META = {
 };
 
 const cardS = { background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 'var(--r-xl)', padding: '20px' };
-const labelS = { fontSize: 11, color: 'var(--text-muted)', fontWeight: 700, display: 'block', marginBottom: 8 };
 const inputS = { width: '100%', padding: '8px 10px', borderRadius: 'var(--r)', border: '1.5px solid var(--border-md)', background: 'var(--bg-raised)', color: 'var(--text-primary)', fontFamily: 'var(--font-body)', fontSize: 13 };
 const btnS = (active) => ({
   padding: '6px 14px', borderRadius: 'var(--r-lg)', border: `1.5px solid ${active ? 'var(--brand-light)' : 'var(--border)'}`,
@@ -99,6 +98,47 @@ export default function ImportBatchReviewPage() {
 
   const parseArr = (v) => { try { return Array.isArray(v) ? v : JSON.parse(v || '[]'); } catch { return []; } };
 
+  // Topic-picker state — reused cascading pattern from the textbook chapter mapper
+  const [topicPickerRowId, setTopicPickerRowId] = useState(null);
+  const [examBodies, setExamBodies] = useState([]);
+  const [examinations, setExaminations] = useState([]);
+  const [tSubjects, setTSubjects] = useState([]);
+  const [tTopics, setTTopics] = useState([]);
+  const [pickBody, setPickBody] = useState('');
+  const [pickExam, setPickExam] = useState('');
+  const [pickSubject, setPickSubject] = useState('');
+  const [solvingMissing, setSolvingMissing] = useState(false);
+
+  const openTopicPicker = (rowId) => {
+    setTopicPickerRowId(rowId);
+    if (examBodies.length === 0) syllabusAPI.examBodies().then(r => setExamBodies(r.data.exam_bodies || []));
+  };
+  useEffect(() => { if (pickBody) syllabusAPI.examinations(pickBody).then(r => setExaminations(r.data.examinations || [])); }, [pickBody]);
+  useEffect(() => { if (pickExam) syllabusAPI.subjects(pickExam).then(r => setTSubjects(r.data.subjects || [])); }, [pickExam]);
+  useEffect(() => { if (pickSubject) syllabusAPI.topics(pickSubject).then(r => setTTopics(r.data.topics || [])); }, [pickSubject]);
+
+  const assignTopic = async (rowId, topicId, topicName) => {
+    try {
+      await importBatchAPI.updateStaged(id, rowId, { topic_id: topicId });
+      toast.success(`Tagged to topic: ${topicName}`);
+      setTopicPickerRowId(null);
+      load();
+    } catch { toast.error('Could not assign topic'); }
+  };
+
+  const solveMissingAnswers = async () => {
+    setSolvingMissing(true);
+    try {
+      const res = await importBatchAPI.aiSolveMissing(id);
+      toast.success(res.data.message);
+      load();
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'AI-solve failed');
+    } finally {
+      setSolvingMissing(false);
+    }
+  };
+
   const startEdit = (row) => {
     setEditingId(row.id);
     setDraft({
@@ -154,20 +194,6 @@ export default function ImportBatchReviewPage() {
     }
   };
 
-  const [cleaning, setCleaning] = useState(false);
-  const cleanNotation = async () => {
-    setCleaning(true);
-    try {
-      const res = await importBatchAPI.cleanMathNotation(id);
-      toast.success(res.data.message);
-      load();
-    } catch (err) {
-      toast.error(err.response?.data?.error || 'Cleanup failed');
-    } finally {
-      setCleaning(false);
-    }
-  };
-
   const publish = async () => {
     setPublishing(true);
     try {
@@ -202,18 +228,18 @@ export default function ImportBatchReviewPage() {
             {' · '}Status: <strong style={{ color: 'var(--text-primary)' }}>{batch.status}</strong>
           </p>
         </div>
-        <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+        <div style={{ display: 'flex', gap: 10 }}>
           <button
-            onClick={cleanNotation}
-            disabled={cleaning}
-            title="Fixes raw $\LaTeX$-style math markup (older batches only — new batches come out clean automatically)"
+            onClick={solveMissingAnswers}
+            disabled={solvingMissing}
+            title="Attempts to compute an answer for questions where no answer key was found — flagged as AI-derived, stays needs_review until you confirm"
             style={{
-              padding: '10px 16px', borderRadius: 'var(--r-lg)', border: '1.5px solid var(--border-md)', fontWeight: 700, fontSize: 13,
-              background: 'var(--bg-raised)', color: cleaning ? 'var(--text-muted)' : 'var(--text-secondary)',
-              cursor: cleaning ? 'not-allowed' : 'pointer',
+              padding: '10px 16px', borderRadius: 'var(--r-lg)', border: '1.5px solid var(--border-md)',
+              background: solvingMissing ? 'var(--bg-raised)' : 'var(--bg-surface)', color: 'var(--text-secondary)',
+              fontWeight: 700, fontSize: 14, cursor: solvingMissing ? 'not-allowed' : 'pointer',
             }}
           >
-            {cleaning ? 'Cleaning…' : '🧹 Clean Math Notation'}
+            {solvingMissing ? 'Solving…' : '✨ AI-Solve Missing Answers'}
           </button>
           <button
             onClick={publish}
@@ -335,11 +361,45 @@ export default function ImportBatchReviewPage() {
                     {row.review_status !== 'verified' && (
                       <button onClick={() => quickVerify(row.id)} style={{ ...btnS(false), color: 'var(--success)' }}>Quick Verify</button>
                     )}
+                    <button onClick={() => openTopicPicker(row.id)} style={{ ...btnS(false), color: row.topic_id ? 'var(--success)' : 'var(--text-secondary)' }}>
+                      {row.topic_id ? '✓ Topic' : '+ Topic'}
+                    </button>
                     <button onClick={() => startEdit(row)} style={btnS(false)}>Edit</button>
                     <button onClick={() => reject(row.id)} style={{ ...btnS(false), color: 'var(--danger)' }}>Reject</button>
                   </div>
                 )}
               </div>
+
+              {topicPickerRowId === row.id && (
+                <div style={{ marginBottom: 10, padding: 12, background: 'var(--bg-raised)', borderRadius: 'var(--r)', border: '1px solid var(--border)' }}>
+                  <p style={{ fontSize: 12, fontWeight: 700, marginBottom: 8 }}>Tag this question to a syllabus topic (so it's usable for "Practice Questions" on that topic's page):</p>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, marginBottom: 8 }}>
+                    <select style={inputS} value={pickBody} onChange={e => { setPickBody(e.target.value); setPickExam(''); setPickSubject(''); }}>
+                      <option value="">Exam body…</option>
+                      {examBodies.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+                    </select>
+                    <select style={inputS} value={pickExam} onChange={e => { setPickExam(e.target.value); setPickSubject(''); }} disabled={!pickBody}>
+                      <option value="">Examination…</option>
+                      {examinations.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
+                    </select>
+                    <select style={inputS} value={pickSubject} onChange={e => setPickSubject(e.target.value)} disabled={!pickExam}>
+                      <option value="">Subject…</option>
+                      {tSubjects.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                    </select>
+                    <select style={inputS} disabled={!pickSubject} onChange={e => {
+                      const t = tTopics.find(t => t.id === e.target.value);
+                      if (t) assignTopic(row.id, t.id, t.name);
+                    }}>
+                      <option value="">Topic…</option>
+                      {tTopics.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                    </select>
+                  </div>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    {row.topic_id && <button onClick={() => assignTopic(row.id, null, 'none')} style={{ ...btnS(false), color: 'var(--danger)' }}>Remove Topic</button>}
+                    <button onClick={() => setTopicPickerRowId(null)} style={btnS(false)}>Close</button>
+                  </div>
+                </div>
+              )}
 
               {row.review_notes && !isEditing && (
                 <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 10 }}>Notes: {row.review_notes}</p>

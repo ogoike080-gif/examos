@@ -649,6 +649,28 @@ async function createSchema() {
   `);
 
   console.log('✅ Textbook library schema ready');
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // Milestone D: link past questions to syllabus topics
+  // ═══════════════════════════════════════════════════════════════════════
+  // Connects the CBT question bank to the Read-by-Topic system — without
+  // this, "Practice Questions" on a topic page has nothing to pull from.
+  // Nullable: existing questions stay valid untagged; tagging happens during
+  // batch review (or later, in bulk, from Question Bank).
+  try {
+    await db.execute(`ALTER TABLE questions ADD COLUMN topic_id VARCHAR(36) NULL`);
+    console.log('✅ questions.topic_id column added');
+  } catch (e) { /* already exists */ }
+  try {
+    await db.execute(`ALTER TABLE questions ADD INDEX idx_question_topic (topic_id)`);
+  } catch (e) { /* already exists */ }
+
+  try {
+    await db.execute(`ALTER TABLE staged_questions ADD COLUMN topic_id VARCHAR(36) NULL`);
+    console.log('✅ staged_questions.topic_id column added');
+  } catch (e) { /* already exists */ }
+
+  console.log('✅ Database schema ready');
 }
 
 module.exports = { initDB, getDB };

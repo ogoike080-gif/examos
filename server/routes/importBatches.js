@@ -26,9 +26,8 @@ const AdmZip = require('adm-zip');
 const { v4: uuidv4 } = require('uuid');
 const { getDB } = require('../models/db');
 const { authenticate, authorize } = require('../middleware/auth');
-const { extractQuestionsFromImage, reverifyLowConfidenceQuestion } = require('../ai/questionGenerator');
+const { extractQuestionsFromImage, reverifyLowConfidenceQuestion, solveObjectiveQuestion } = require('../ai/questionGenerator');
 const { computeConfidence } = require('../services/confidenceScoring');
-const { cleanQuestionFields } = require('../utils/mathNotation');
 
 const router = express.Router();
 
@@ -497,55 +496,17 @@ router.get('/:id/staged', authenticate, authorize('superadmin', 'admin', 'examin
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// POST /api/import/batches/:id/clean-math-notation
-// Retroactive cleanup for batches staged before mathNotation.js was wired into
-// extractQuestionsFromImage — new batches come out clean automatically now,
-// this is only needed for older ones still sitting in review with raw
-// $\LaTeX$-style markup. Scoped to this one batch, safe to run more than once.
-router.post('/:id/clean-math-notation', authenticate, authorize('superadmin', 'admin', 'examiner'), async (req, res) => {
-  try {
-    const db = getDB();
-    const [rows] = await db.execute(
-      'SELECT id, question_text, options, explanation FROM staged_questions WHERE import_batch_id=?',
-      [req.params.id]
-    );
-
-    let updated = 0;
-    for (const row of rows) {
-      const cleaned = cleanQuestionFields({
-        question_text: row.question_text,
-        options: row.options, // JSON column — mysql2 already gives us a real array here
-        explanation: row.explanation,
-      });
-
-      const textChanged = cleaned.question_text !== row.question_text;
-      const optionsChanged = JSON.stringify(cleaned.options) !== JSON.stringify(row.options);
-      const explanationChanged = cleaned.explanation !== row.explanation;
-
-      if (textChanged || optionsChanged || explanationChanged) {
-        await db.execute(
-          'UPDATE staged_questions SET question_text=?, options=?, explanation=? WHERE id=?',
-          [cleaned.question_text, JSON.stringify(cleaned.options), cleaned.explanation, row.id]
-        );
-        updated++;
-      }
-    }
-
-    res.json({ message: `Cleaned ${updated} of ${rows.length} question(s) in this batch`, scanned: rows.length, updated });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
 // PUT /api/import/batches/:id/staged/:stagedId — admin correction during review
 router.put('/:id/staged/:stagedId', authenticate, authorize('superadmin', 'admin', 'examiner'), async (req, res) => {
   try {
     const db = getDB();
-    const { question_text, options, correct_answers, explanation, question_number, review_status } = req.body;
+    const { question_text, options, correct_answers, explanation, question_number, review_status, topic_id } = req.body;
     const allowedStatus = ['verified', 'needs_review', 'answer_conflict', 'duplicate', 'missing', 'rejected'];
     await db.execute(
       `UPDATE staged_questions SET
        question_text=COALESCE(?,question_text), options=COALESCE(?,options),
        correct_answers=COALESCE(?,correct_answers), explanation=COALESCE(?,explanation),
-       question_number=COALESCE(?,question_number),
+       question_number=COALESCE(?,question_number), topic_id=?,
        review_status=?, reviewed_by=?, reviewed_at=NOW()
        WHERE id=? AND import_batch_id=?`,
       [
@@ -554,12 +515,73 @@ router.put('/:id/staged/:stagedId', authenticate, authorize('superadmin', 'admin
         correct_answers ? JSON.stringify(correct_answers) : null,
         explanation || null,
         question_number ?? null,
+        topic_id || null,
         allowedStatus.includes(review_status) ? review_status : 'needs_review',
         req.user.id, req.params.stagedId, req.params.id,
       ]
     );
     res.json({ message: 'Staged question updated' });
   } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// POST /api/import/batches/:id/ai-solve-missing — for every staged question
+// in this batch still lacking a correct answer (no answer key was ever found
+// for it), attempt to have the AI genuinely solve the problem from its own
+// text — distinct from Pass 5's re-verification, which only re-reads the
+// page and refuses to guess an unmarked answer. Results are clearly labeled
+// as AI-derived in review_notes and NEVER auto-verified — status stays
+// needs_review regardless of the AI's own confidence, since a human should
+// confirm computational correctness before anything publishes.
+router.post('/:id/ai-solve-missing', authenticate, authorize('superadmin', 'admin'), async (req, res) => {
+  try {
+    const db = getDB();
+    const [rows] = await db.execute(
+      `SELECT id, question_text, options, question_type FROM staged_questions
+       WHERE import_batch_id=? AND question_type='mcq'
+       AND (correct_answers IS NULL OR JSON_LENGTH(correct_answers) = 0)
+       AND review_status NOT IN ('rejected','duplicate')`,
+      [req.params.id]
+    );
+    if (!rows.length) return res.json({ message: 'No unanswered questions found in this batch', solved: 0, unsolved: 0, attempted: 0 });
+
+    const [batchRows] = await db.execute('SELECT exam_body, subject_id FROM import_batches WHERE id=?', [req.params.id]);
+    let subjectName = null;
+    if (batchRows[0]?.subject_id) {
+      const [s] = await db.execute('SELECT name FROM subjects WHERE id=?', [batchRows[0].subject_id]);
+      subjectName = s[0]?.name || null;
+    }
+
+    let solved = 0, unsolved = 0;
+    for (const row of rows) {
+      let options;
+      try { options = Array.isArray(row.options) ? row.options : JSON.parse(row.options || '[]'); } catch { options = []; }
+
+      const result = await solveObjectiveQuestion({ question_text: row.question_text, options, subject: subjectName });
+
+      if (result.solvable && result.correct_answer_letter && options[result.correct_answer_letter.charCodeAt(0) - 65]) {
+        const answer = options[result.correct_answer_letter.charCodeAt(0) - 65];
+        await db.execute(
+          `UPDATE staged_questions SET correct_answers=?, explanation=?,
+           review_notes = CONCAT(COALESCE(review_notes, ''), IF(review_notes IS NULL OR review_notes = '', '', '; '), ?)
+           WHERE id=?`,
+          [
+            JSON.stringify([answer]),
+            result.solution_steps || null,
+            `AI-derived answer (${result.confidence || 'unknown'} confidence) — computed, not from an official answer key. Verify before publishing.`,
+            row.id,
+          ]
+        );
+        solved++;
+      } else {
+        unsolved++;
+      }
+    }
+
+    res.json({ message: `AI-solved ${solved} of ${rows.length} unanswered question(s)`, solved, unsolved, attempted: rows.length });
+  } catch (err) {
+    console.error('ai-solve-missing error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // POST /api/import/batches/:id/publish — copy verified staged rows into the live question bank
@@ -586,14 +608,14 @@ router.post('/:id/publish', authenticate, authorize('superadmin', 'admin'), asyn
         `INSERT INTO questions
          (id, subject_id, question_text, question_type, options, correct_answers,
           explanation, difficulty, marks, tags, exam_types, media_url, created_by,
-          exam_body, paper_type, question_number)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 'medium', 1, ?, ?, ?, ?, ?, ?, ?)`,
+          exam_body, paper_type, question_number, topic_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'medium', 1, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           questionId, s.subject_id, s.question_text, s.question_type,
           s.options, s.correct_answers, s.explanation,
           JSON.stringify(tags), JSON.stringify([batch.exam_body]),
           s.media_url, req.user.id,
-          s.exam_body, s.paper_type, s.question_number,
+          s.exam_body, s.paper_type, s.question_number, s.topic_id || null,
         ]
       );
       await db.execute('UPDATE staged_questions SET published_question_id=? WHERE id=?', [questionId, s.id]);
