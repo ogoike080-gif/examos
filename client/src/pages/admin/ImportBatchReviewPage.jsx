@@ -112,6 +112,23 @@ export default function ImportBatchReviewPage() {
   const [pickSubject, setPickSubject] = useState('');
   const [solvingMissing, setSolvingMissing] = useState(false);
 
+  // Quality checklist state — keyed by rowId, holds the last-run result
+  // (also persisted server-side so it survives a page reload).
+  const [checkingQuality, setCheckingQuality] = useState(null);
+
+  const runQualityCheck = async (rowId) => {
+    setCheckingQuality(rowId);
+    try {
+      const res = await importBatchAPI.qualityCheck(id, rowId);
+      toast.success(`Quality check: ${res.data.overall === 'pass' ? 'Passed ✓' : res.data.overall === 'needs_cleanup' ? 'Minor issues found' : 'Failed — review needed'}`);
+      load();
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Quality check failed');
+    } finally {
+      setCheckingQuality(null);
+    }
+  };
+
   // Diagram reconstruction — Milestone E2. Keyed by staged row id so
   // multiple rows' previews can exist independently; nothing is saved until
   // the admin explicitly clicks Accept (see acceptReconstruction below).
@@ -401,6 +418,9 @@ export default function ImportBatchReviewPage() {
                       {row.topic_id ? '✓ Topic' : '+ Topic'}
                     </button>
                     <button onClick={() => setPreviewRow(row)} style={{ ...btnS(false), color: 'var(--brand-light)' }}>👁 Preview</button>
+                    <button onClick={() => runQualityCheck(row.id)} disabled={checkingQuality === row.id} style={{ ...btnS(false), color: 'var(--warning)' }}>
+                      {checkingQuality === row.id ? 'Checking…' : '✓ Quality Check'}
+                    </button>
                     <button onClick={() => startEdit(row)} style={btnS(false)}>Edit</button>
                     <button onClick={() => reject(row.id)} style={{ ...btnS(false), color: 'var(--danger)' }}>Reject</button>
                   </div>
@@ -437,6 +457,27 @@ export default function ImportBatchReviewPage() {
                   </div>
                 </div>
               )}
+
+              {row.quality_check && !isEditing && (() => {
+                const qc = typeof row.quality_check === 'string' ? JSON.parse(row.quality_check) : row.quality_check;
+                const badgeColor = qc.overall === 'pass' ? 'var(--success)' : qc.overall === 'needs_cleanup' ? 'var(--warning)' : 'var(--danger)';
+                const badgeBg = qc.overall === 'pass' ? 'var(--success-dim)' : qc.overall === 'needs_cleanup' ? 'var(--warning-dim)' : 'var(--danger-dim)';
+                return (
+                  <div style={{ marginBottom: 10, padding: 10, background: badgeBg, borderRadius: 'var(--r)', border: `1px solid ${badgeColor}` }}>
+                    <p style={{ fontSize: 12, fontWeight: 800, color: badgeColor, marginBottom: 6 }}>
+                      Quality Check: {qc.overall === 'pass' ? '✓ Passed' : qc.overall === 'needs_cleanup' ? '⚠ Minor issues' : '✗ Needs attention'}
+                    </p>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                      {qc.checks.map((c, i) => (
+                        <div key={i} style={{ fontSize: 11, color: 'var(--text-secondary)', display: 'flex', gap: 6 }}>
+                          <span>{c.status === 'pass' ? '✓' : c.status === 'fail' ? '✗' : c.status === 'not_applicable' ? '–' : '⚠'}</span>
+                          <span>{c.label}{c.note ? ` — ${c.note}` : ''}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
 
               {row.review_notes && !isEditing && (
                 <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 10 }}>Notes: {row.review_notes}</p>

@@ -533,6 +533,60 @@ Respond in JSON only (no markdown, no backticks):
   }
 }
 
+/**
+ * Runs the source-photo artifact checklist from spec section 11 — the
+ * checks that genuinely need a fresh look at the image, not just a re-read
+ * of the extracted text: crop edges, neighboring question bleed, handwritten
+ * marks, watermarks/page furniture. Opt-in per question (admin-triggered
+ * from the review screen), not automatic for every import — same cost
+ * discipline as diagram reconstruction and Pass 5 re-verification.
+ *
+ * Deliberately does NOT re-judge extraction correctness (that's what
+ * confidence scoring and Pass 5 already do) — this is specifically about
+ * whether the SOURCE PHOTO itself is clean enough that nothing needs manual
+ * cleanup or a re-crop before this diagram is used or reconstructed as SVG.
+ */
+async function qualityCheckDiagram({ imageBase64, mediaType, questionText }) {
+  const prompt = `You are doing a quality-control pass on a cropped exam-question photo before it's used in a digital learning app. The question this crop belongs to is:
+
+"${questionText || '(not provided)'}"
+
+Check the image for each of these specific artifacts and report pass/fail/uncertain for each:
+
+Respond in JSON only (no markdown, no backticks):
+{
+  "checks": [
+    { "id": "crop_edges", "label": "No visible crop boundaries or uneven edges", "status": "pass|fail|uncertain", "note": "brief reason if fail/uncertain" },
+    { "id": "neighboring_text", "label": "No text/content from a neighboring question bleeding in", "status": "pass|fail|uncertain", "note": "" },
+    { "id": "handwriting", "label": "No handwritten marks, circled answers, or candidate annotations", "status": "pass|fail|uncertain", "note": "" },
+    { "id": "artifacts", "label": "No scanner shadows, watermarks, page numbers, or paper texture noise", "status": "pass|fail|uncertain", "note": "" },
+    { "id": "diagram_match", "label": "The diagram's elements actually match what the question text describes", "status": "pass|fail|uncertain|not_applicable", "note": "" }
+  ],
+  "overall": "pass|needs_cleanup|fail"
+}
+
+Set "overall" to "fail" only if something would actually mislead or confuse a student (e.g. wrong diagram, illegible content). Use "needs_cleanup" for cosmetic issues (a crop edge, minor shadow) that don't affect correctness. Use "not_applicable" for diagram_match if this image isn't actually a diagram.`;
+
+  try {
+    const response = await ai.models.generateContent({
+      model: VISION_MODEL,
+      contents: [
+        {
+          role: 'user',
+          parts: [
+            { inlineData: { mimeType: mediaType, data: imageBase64 } },
+            { text: prompt },
+          ],
+        },
+      ],
+    });
+    return extractJSON(response.text);
+  } catch (err) {
+    console.error('qualityCheckDiagram failed:', err.message);
+    return { checks: [], overall: 'fail', error: err.message };
+  }
+}
+
 module.exports = {
   analyzeProctoringEvent,
   generateQuestionsWithAI,
@@ -544,4 +598,5 @@ module.exports = {
   solveObjectiveQuestion,
   chatWithStudyAssistant,
   reconstructDiagramSVG,
+  qualityCheckDiagram,
 };

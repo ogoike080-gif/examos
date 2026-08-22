@@ -26,7 +26,7 @@ const AdmZip = require('adm-zip');
 const { v4: uuidv4 } = require('uuid');
 const { getDB } = require('../models/db');
 const { authenticate, authorize } = require('../middleware/auth');
-const { extractQuestionsFromImage, reverifyLowConfidenceQuestion, solveObjectiveQuestion, reconstructDiagramSVG } = require('../ai/questionGenerator');
+const { extractQuestionsFromImage, reverifyLowConfidenceQuestion, solveObjectiveQuestion, reconstructDiagramSVG, qualityCheckDiagram } = require('../ai/questionGenerator');
 const { computeConfidence } = require('../services/confidenceScoring');
 
 const router = express.Router();
@@ -585,6 +585,80 @@ router.post('/:id/staged/:stagedId/reconstruct-diagram', authenticate, authorize
     res.status(500).json({ error: err.message });
   }
 });
+
+// POST /:id/staged/:stagedId/quality-check — spec section 11's checklist.
+// Programmatic checks (question text/options completeness, numbering source)
+// always run for free. The AI vision pass (crop edges, neighboring text,
+// handwriting, watermarks, diagram-matches-question) only runs when the
+// question has a source photo, and is opt-in per question via this route —
+// not automatic for every import.
+router.post('/:id/staged/:stagedId/quality-check', authenticate, authorize('superadmin', 'admin', 'examiner'), async (req, res) => {
+  try {
+    const db = getDB();
+    const [rows] = await db.execute(
+      'SELECT question_text, options, question_type, media_url, diagram_svg FROM staged_questions WHERE id=? AND import_batch_id=?',
+      [req.params.stagedId, req.params.id]
+    );
+    const row = rows[0];
+    if (!row) return res.status(404).json({ error: 'Staged question not found' });
+
+    let options;
+    try { options = Array.isArray(row.options) ? row.options : JSON.parse(row.options || '[]'); } catch { options = []; }
+
+    // ── Free, programmatic checks — no AI call needed ──
+    const checks = [];
+    checks.push({
+      id: 'text_complete', label: 'Question text is complete',
+      status: row.question_text && row.question_text.trim().length >= 10 ? 'pass' : 'fail',
+      note: row.question_text && row.question_text.trim().length >= 10 ? '' : 'Question text is missing or suspiciously short',
+    });
+    if (row.question_type === 'mcq') {
+      checks.push({
+        id: 'options_complete', label: 'Answer options are complete',
+        status: options.length >= 4 ? 'pass' : options.length > 0 ? 'uncertain' : 'fail',
+        note: options.length >= 4 ? '' : `Only ${options.length} option(s) found`,
+      });
+    }
+    checks.push({
+      id: 'numbering', label: 'Question numbering is LMS-generated (not source-paper numbering)',
+      status: 'pass', note: 'The app always shows "Question N of Total" positionally — the printed source number is kept only as metadata.',
+    });
+    checks.push({
+      id: 'image_sharp', label: 'Image/diagram is sharp',
+      status: row.diagram_svg ? 'pass' : row.media_url ? 'uncertain' : 'not_applicable',
+      note: row.diagram_svg ? 'Reconstructed as vector SVG — always sharp at any size.' : row.media_url ? 'Still a raster photo — consider reconstructing as SVG for guaranteed sharpness on all devices.' : '',
+    });
+
+    // ── AI vision pass — only if there's a source photo, and the photo file still exists ──
+    let aiOverall = null;
+    if (row.media_url) {
+      const filePath = path.join(__dirname, '..', row.media_url.replace(/^\//, ''));
+      if (fs.existsSync(filePath)) {
+        const buffer = fs.readFileSync(filePath);
+        const ext = path.extname(filePath).toLowerCase();
+        const mediaType = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
+        const aiResult = await qualityCheckDiagram({ imageBase64: buffer.toString('base64'), mediaType, questionText: row.question_text });
+        if (Array.isArray(aiResult.checks)) checks.push(...aiResult.checks);
+        aiOverall = aiResult.overall || null;
+      } else {
+        checks.push({ id: 'source_photo', label: 'Source photo artifact check', status: 'uncertain', note: 'Original photo file is missing from disk — could not run the visual check.' });
+      }
+    }
+
+    const hasFailure = checks.some(c => c.status === 'fail') || aiOverall === 'fail';
+    const hasCleanupNeeded = checks.some(c => c.status === 'uncertain') || aiOverall === 'needs_cleanup';
+    const overall = hasFailure ? 'fail' : hasCleanupNeeded ? 'needs_cleanup' : 'pass';
+
+    const result = { checks, overall, checked_at: new Date().toISOString() };
+    await db.execute('UPDATE staged_questions SET quality_check=? WHERE id=?', [JSON.stringify(result), req.params.stagedId]);
+
+    res.json(result);
+  } catch (err) {
+    console.error('quality-check error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 
 // POST /api/import/batches/:id/ai-solve-missing — for every staged question
 // in this batch still lacking a correct answer (no answer key was ever found

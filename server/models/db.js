@@ -690,6 +690,19 @@ async function createSchema() {
   } catch (e) { /* already exists */ }
 
   console.log('✅ Diagram reconstruction schema ready');
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // Milestone E4: quality checklist (spec section 11)
+  // ═══════════════════════════════════════════════════════════════════════
+  // Stores the last-run checklist result so it persists in the review UI
+  // without re-running the AI check on every page load. Opt-in per question
+  // (admin-triggered), same cost-control principle as diagram reconstruction.
+  try {
+    await db.execute(`ALTER TABLE staged_questions ADD COLUMN quality_check JSON NULL`);
+    console.log('✅ staged_questions.quality_check column added');
+  } catch (e) { /* already exists */ }
+
+  console.log('✅ Quality checklist schema ready');
 }
 
 module.exports = { initDB, getDB };

@@ -3,19 +3,29 @@ import katex from 'katex';
 import 'katex/dist/katex.min.css';
 
 // Splits text on $...$ delimited math segments and renders each with KaTeX;
-// everything outside $...$ renders as plain text. Used anywhere question
-// text, options, or explanations are shown, so imported math notation
-// ($x^2$, $\frac{1}{2}$, $30^\circ$) renders as real typeset math instead of
-// either raw LaTeX syntax or a flattened Unicode approximation.
+// everything outside $...$ renders as plain text.
 //
-// throwOnError: false means a malformed LaTeX segment (which can happen —
-// AI-extracted math isn't always perfectly formed) degrades to showing the
-// raw $...$ text rather than crashing the question display for the student.
-export default function MathText({ text, style, inline = false }) {
+// Deliberately conservative about layout impact: if the text has no $...$
+// math in it at all (the common case for most already-imported content,
+// since legacy data was Unicode-flattened rather than kept as LaTeX), this
+// returns the raw string with NO wrapping element and NO forced styles —
+// identical to what {text} would have rendered before this component
+// existed. A forced whiteSpace:'pre-wrap' wrapper on every single call site
+// (including inline option buttons inside flex rows) was the actual cause
+// of a mobile layout regression — option text collapsing into a vertical
+// one-word-per-line stack — so nothing is added unless there's real math to
+// render, and even then the wrapper stays a plain inline span with no
+// forced whiteSpace unless the caller's own `style` prop asks for it.
+export default function MathText({ text, style, inline }) {
   if (text === null || text === undefined || text === '') return null;
+  const str = String(text);
 
-  const parts = String(text).split(/(\$[^$]+\$)/g);
+  if (!str.includes('$')) {
+    // No math at all — render exactly as plain text, no wrapper.
+    return style ? <span style={style}>{str}</span> : str;
+  }
 
+  const parts = str.split(/(\$[^$]+\$)/g);
   const content = parts.map((part, i) => {
     if (part.length > 2 && part.startsWith('$') && part.endsWith('$')) {
       const math = part.slice(1, -1).trim();
@@ -31,6 +41,5 @@ export default function MathText({ text, style, inline = false }) {
     return <React.Fragment key={i}>{part}</React.Fragment>;
   });
 
-  const Tag = inline ? 'span' : 'span';
-  return <Tag style={{ whiteSpace: 'pre-wrap', ...style }}>{content}</Tag>;
+  return <span style={style}>{content}</span>;
 }
