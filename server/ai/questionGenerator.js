@@ -470,6 +470,69 @@ Rules:
   }
 }
 
+/**
+ * Reconstructs a cropped diagram photo as clean, native SVG markup —
+ * Milestone E2. This is the highest-risk piece of the "no screenshots"
+ * redesign: an AI-generated geometry diagram can look plausible while being
+ * subtly wrong (angle proportions off, a mislabeled point), which is worse
+ * than a slightly rough photo. So this function is ALWAYS opt-in per
+ * question, admin-triggered, and the caller must show the original photo
+ * side-by-side with the result for human verification before it's ever
+ * accepted — see the reconstruct-diagram route in importBatches.js.
+ *
+ * Returns { svg, elements_description, confidence } rather than silently
+ * committing to a result — confidence gives the admin an extra signal on
+ * top of their own visual check, and elements_description explains what the
+ * model believes it's looking at, which helps spot a misread quickly (e.g.
+ * "isosceles triangle" when the photo is actually a right triangle).
+ */
+async function reconstructDiagramSVG({ imageBase64, mediaType, questionText }) {
+  const prompt = `This image is a cropped diagram from a mathematics/science exam question. The question it belongs to is:
+
+"${questionText || '(not provided)'}"
+
+Recreate this diagram as a clean, professional SVG — the kind you'd see in a modern digital textbook, not a scan of a printed page.
+
+Rules:
+- Preserve every mathematically necessary element exactly: shapes, points, labels, given values (angles, lengths, etc.), and the relationships between them (which lines are parallel, which angle is marked, which point is the centre, etc.).
+- Do NOT preserve: paper texture, scan shadows, crop edges, handwritten marks, circled answers, or anything not part of the diagram itself.
+- Use a clean white/transparent background, consistent stroke width (around 2px), a readable sans-serif font for labels, and balanced spacing.
+- viewBox should be a clean 0 0 W H with reasonable dimensions (e.g. 0 0 400 300) — do not hardcode pixel-perfect coordinates from the original photo.
+- If you cannot confidently determine an element's exact position/value (a number is unreadable, a label is ambiguous), do NOT guess — note it in elements_description and lower your confidence rather than inventing a plausible-looking placement.
+
+Respond in JSON only (no markdown, no backticks):
+{
+  "svg": "the complete <svg>...</svg> markup as a single string",
+  "elements_description": "a plain-language list of what you identified in the diagram (shapes, points, labels, given values) — this is shown to a teacher for verification, so be specific",
+  "confidence": "high|medium|low",
+  "uncertain_elements": ["any specific elements you weren't fully confident reading, if any"]
+}`;
+
+  try {
+    const response = await ai.models.generateContent({
+      model: VISION_MODEL,
+      contents: [
+        {
+          role: 'user',
+          parts: [
+            { inlineData: { mimeType: mediaType, data: imageBase64 } },
+            { text: prompt },
+          ],
+        },
+      ],
+    });
+    const result = extractJSON(response.text);
+    // Basic sanity check — don't hand back something that isn't even SVG-shaped.
+    if (!result.svg || !result.svg.trim().startsWith('<svg')) {
+      return { svg: null, elements_description: result.elements_description || null, confidence: 'low', error: 'Model did not return valid SVG markup' };
+    }
+    return result;
+  } catch (err) {
+    console.error('reconstructDiagramSVG failed:', err.message);
+    return { svg: null, elements_description: null, confidence: 'low', error: err.message };
+  }
+}
+
 module.exports = {
   analyzeProctoringEvent,
   generateQuestionsWithAI,
@@ -480,4 +543,5 @@ module.exports = {
   generateTopicContent,
   solveObjectiveQuestion,
   chatWithStudyAssistant,
+  reconstructDiagramSVG,
 };

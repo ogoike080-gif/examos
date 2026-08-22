@@ -186,6 +186,11 @@ export default function TopicLearningPage() {
               <div>
                 <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 10 }}>Question {practiceIndex + 1} of {practiceQuestions.length}</p>
                 <p style={{ fontSize: 15, fontWeight: 600, marginBottom: 14 }}><MathText text={q.question_text} /></p>
+                {q.diagram_svg ? (
+                  <div style={{ marginBottom: 14, maxWidth: '100%' }} dangerouslySetInnerHTML={{ __html: q.diagram_svg }} />
+                ) : q.media_url && (
+                  <img src={q.media_url} alt="Question diagram" style={{ display: 'block', maxWidth: '100%', maxHeight: 300, marginBottom: 14, borderRadius: 'var(--r-lg)', border: '1px solid var(--border)' }} />
+                )}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 14 }}>
                   {options.map((opt, i) => {
                     const isCorrect = correct.includes(opt);

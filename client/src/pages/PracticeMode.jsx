@@ -437,7 +437,9 @@ function PracticeEngine({ config, onFinish }) {
 
           <div style={{ background:'var(--bg-surface)', border:'1px solid var(--border)', borderRadius:'var(--r-xl)', padding:'18px 20px', marginBottom:14, fontSize:15, lineHeight:1.8, fontWeight:500 }}>
             <MathText text={q.question_text} />
-            {q.media_url && (
+            {q.diagram_svg ? (
+              <div style={{ marginTop:14, maxWidth:'100%' }} dangerouslySetInnerHTML={{ __html: q.diagram_svg }} />
+            ) : q.media_url && (
               <img src={q.media_url} alt="Question diagram" style={{ display:'block', maxWidth:'100%', maxHeight:340, marginTop:14, borderRadius:'var(--r-lg)', border:'1px solid var(--border)' }} />
             )}
           </div>

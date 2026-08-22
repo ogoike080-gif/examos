@@ -26,7 +26,7 @@ const AdmZip = require('adm-zip');
 const { v4: uuidv4 } = require('uuid');
 const { getDB } = require('../models/db');
 const { authenticate, authorize } = require('../middleware/auth');
-const { extractQuestionsFromImage, reverifyLowConfidenceQuestion, solveObjectiveQuestion } = require('../ai/questionGenerator');
+const { extractQuestionsFromImage, reverifyLowConfidenceQuestion, solveObjectiveQuestion, reconstructDiagramSVG } = require('../ai/questionGenerator');
 const { computeConfidence } = require('../services/confidenceScoring');
 
 const router = express.Router();
@@ -502,26 +502,88 @@ router.put('/:id/staged/:stagedId', authenticate, authorize('superadmin', 'admin
     const db = getDB();
     const { question_text, options, correct_answers, explanation, question_number, review_status, topic_id } = req.body;
     const allowedStatus = ['verified', 'needs_review', 'answer_conflict', 'duplicate', 'missing', 'rejected'];
+
+    // diagram_svg needs three-way handling: field absent (don't touch),
+    // field is a real SVG string (accept the reconstruction), or field is
+    // explicitly null (discard — go back to the original photo). COALESCE
+    // can't distinguish "not provided" from "explicitly clear it", so this
+    // is built as a conditional SET clause instead.
+    const touchesDiagramSvg = Object.prototype.hasOwnProperty.call(req.body, 'diagram_svg');
+    const setClauses = [
+      'question_text=COALESCE(?,question_text)', 'options=COALESCE(?,options)',
+      'correct_answers=COALESCE(?,correct_answers)', 'explanation=COALESCE(?,explanation)',
+      'question_number=COALESCE(?,question_number)', 'topic_id=?', 'review_status=?',
+      'reviewed_by=?', 'reviewed_at=NOW()',
+    ];
+    const params = [
+      question_text || null,
+      options ? JSON.stringify(options) : null,
+      correct_answers ? JSON.stringify(correct_answers) : null,
+      explanation || null,
+      question_number ?? null,
+      topic_id || null,
+      allowedStatus.includes(review_status) ? review_status : 'needs_review',
+      req.user.id,
+    ];
+    if (touchesDiagramSvg) {
+      setClauses.push('diagram_svg=?');
+      params.push(req.body.diagram_svg || null);
+    }
+    params.push(req.params.stagedId, req.params.id);
+
     await db.execute(
-      `UPDATE staged_questions SET
-       question_text=COALESCE(?,question_text), options=COALESCE(?,options),
-       correct_answers=COALESCE(?,correct_answers), explanation=COALESCE(?,explanation),
-       question_number=COALESCE(?,question_number), topic_id=?,
-       review_status=?, reviewed_by=?, reviewed_at=NOW()
-       WHERE id=? AND import_batch_id=?`,
-      [
-        question_text || null,
-        options ? JSON.stringify(options) : null,
-        correct_answers ? JSON.stringify(correct_answers) : null,
-        explanation || null,
-        question_number ?? null,
-        topic_id || null,
-        allowedStatus.includes(review_status) ? review_status : 'needs_review',
-        req.user.id, req.params.stagedId, req.params.id,
-      ]
+      `UPDATE staged_questions SET ${setClauses.join(', ')} WHERE id=? AND import_batch_id=?`,
+      params
     );
     res.json({ message: 'Staged question updated' });
   } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// POST /:id/staged/:stagedId/reconstruct-diagram — generates a candidate SVG
+// reconstruction of the question's diagram photo, WITHOUT saving anything.
+// The admin reviews the result (svg + elements_description + confidence)
+// against the original photo client-side, then either accepts it (via the
+// PUT route above with diagram_svg set) or discards it (does nothing / sets
+// diagram_svg: null). Nothing here ever auto-commits a reconstruction.
+router.post('/:id/staged/:stagedId/reconstruct-diagram', authenticate, authorize('superadmin', 'admin'), async (req, res) => {
+  try {
+    const db = getDB();
+    const [rows] = await db.execute(
+      'SELECT question_text, media_url FROM staged_questions WHERE id=? AND import_batch_id=?',
+      [req.params.stagedId, req.params.id]
+    );
+    const row = rows[0];
+    if (!row) return res.status(404).json({ error: 'Staged question not found' });
+    if (!row.media_url) return res.status(400).json({ error: 'This question has no diagram photo to reconstruct from' });
+
+    const filePath = path.join(__dirname, '..', row.media_url.replace(/^\//, ''));
+    if (!fs.existsSync(filePath)) {
+      return res.status(400).json({ error: 'The diagram photo file is missing from disk — cannot reconstruct. Try re-importing this page.' });
+    }
+    const buffer = fs.readFileSync(filePath);
+    const ext = path.extname(filePath).toLowerCase();
+    const mediaType = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
+
+    const result = await reconstructDiagramSVG({
+      imageBase64: buffer.toString('base64'),
+      mediaType,
+      questionText: row.question_text,
+    });
+
+    if (!result.svg) {
+      return res.status(502).json({ error: result.error || 'Could not generate a diagram reconstruction', elements_description: result.elements_description });
+    }
+    res.json({
+      svg: result.svg,
+      elements_description: result.elements_description,
+      confidence: result.confidence,
+      uncertain_elements: result.uncertain_elements || [],
+      original_photo_url: row.media_url,
+    });
+  } catch (err) {
+    console.error('reconstruct-diagram error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // POST /api/import/batches/:id/ai-solve-missing — for every staged question
@@ -608,14 +670,14 @@ router.post('/:id/publish', authenticate, authorize('superadmin', 'admin'), asyn
         `INSERT INTO questions
          (id, subject_id, question_text, question_type, options, correct_answers,
           explanation, difficulty, marks, tags, exam_types, media_url, created_by,
-          exam_body, paper_type, question_number, topic_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 'medium', 1, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          exam_body, paper_type, question_number, topic_id, diagram_svg)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'medium', 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           questionId, s.subject_id, s.question_text, s.question_type,
           s.options, s.correct_answers, s.explanation,
           JSON.stringify(tags), JSON.stringify([batch.exam_body]),
           s.media_url, req.user.id,
-          s.exam_body, s.paper_type, s.question_number, s.topic_id || null,
+          s.exam_body, s.paper_type, s.question_number, s.topic_id || null, s.diagram_svg || null,
         ]
       );
       await db.execute('UPDATE staged_questions SET published_question_id=? WHERE id=?', [questionId, s.id]);

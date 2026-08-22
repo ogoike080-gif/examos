@@ -159,6 +159,7 @@ export const importBatchAPI = {
   retryPage: (id, pageId) => axios.post(`${API}/import/batches/${id}/pages/${pageId}/retry`, {}, { timeout: 120000 }),
   fillMissing: (id, number, data) => axios.post(`${API}/import/batches/${id}/missing/${number}`, data),
   aiSolveMissing: (id) => axios.post(`${API}/import/batches/${id}/ai-solve-missing`, {}, { timeout: 300000 }),
+  reconstructDiagram: (id, stagedId) => axios.post(`${API}/import/batches/${id}/staged/${stagedId}/reconstruct-diagram`, {}, { timeout: 120000 }),
 };
 
 // ── Diagram repair for already-published questions whose media_url points

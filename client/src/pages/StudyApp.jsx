@@ -622,14 +622,15 @@ function ExamScreen({ config, onFinish }) {
             {/* Question text */}
             <div style={{ background:'#fff', border:'1px solid #E2E8F0', borderRadius:12, padding:'20px 22px', marginBottom:18, fontSize:15, lineHeight:1.85, color:'#1E293B', fontWeight:500, boxShadow:'0 1px 4px rgba(0,0,0,0.05)' }}>
               <MathText text={q.question_text} />
-              {q.media_url && !lowData && (
+              {q.diagram_svg ? (
+                <div style={{ marginTop:14, maxWidth:'100%' }} dangerouslySetInnerHTML={{ __html: q.diagram_svg }} />
+              ) : q.media_url && !lowData ? (
                 <img src={q.media_url} alt="Question diagram" style={{ display:'block', maxWidth:'100%', maxHeight:340, marginTop:14, borderRadius:10, border:'1px solid #E2E8F0' }} />
-              )}
-              {q.media_url && lowData && (
+              ) : q.media_url && lowData ? (
                 <div style={{ marginTop:14, padding:'10px 14px', background:'#F1F5F9', borderRadius:10, border:'1px dashed #CBD5E1', fontSize:12.5, color:'#64748B' }}>
                   🖼️ Diagram hidden — Low Data mode is on
                 </div>
-              )}
+              ) : null}
             </div>
 
             {/* Options — radio style */}

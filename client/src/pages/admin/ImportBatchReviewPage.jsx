@@ -110,6 +110,39 @@ export default function ImportBatchReviewPage() {
   const [pickSubject, setPickSubject] = useState('');
   const [solvingMissing, setSolvingMissing] = useState(false);
 
+  // Diagram reconstruction — Milestone E2. Keyed by staged row id so
+  // multiple rows' previews can exist independently; nothing is saved until
+  // the admin explicitly clicks Accept (see acceptReconstruction below).
+  const [reconstructing, setReconstructing] = useState(null); // rowId currently generating
+  const [reconstructPreview, setReconstructPreview] = useState({}); // { [rowId]: { svg, elements_description, confidence, uncertain_elements, original_photo_url } }
+
+  const reconstructDiagram = async (rowId) => {
+    setReconstructing(rowId);
+    try {
+      const res = await importBatchAPI.reconstructDiagram(id, rowId);
+      setReconstructPreview(p => ({ ...p, [rowId]: res.data }));
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Could not reconstruct diagram');
+    } finally {
+      setReconstructing(null);
+    }
+  };
+
+  const acceptReconstruction = async (rowId) => {
+    const preview = reconstructPreview[rowId];
+    if (!preview?.svg) return;
+    try {
+      await importBatchAPI.updateStaged(id, rowId, { diagram_svg: preview.svg });
+      toast.success('Diagram reconstruction accepted');
+      setReconstructPreview(p => { const next = { ...p }; delete next[rowId]; return next; });
+      load();
+    } catch { toast.error('Could not save the reconstruction'); }
+  };
+
+  const discardReconstruction = (rowId) => {
+    setReconstructPreview(p => { const next = { ...p }; delete next[rowId]; return next; });
+  };
+
   const openTopicPicker = (rowId) => {
     setTopicPickerRowId(rowId);
     if (examBodies.length === 0) syllabusAPI.examBodies().then(r => setExamBodies(r.data.exam_bodies || []));
@@ -478,9 +511,48 @@ export default function ImportBatchReviewPage() {
                       ))}
                     </ul>
                   )}
-                  {row.media_url && (
-                    <img src={row.media_url} alt="Diagram" style={{ maxWidth: 280, borderRadius: 'var(--r)', border: '1px solid var(--border)', marginBottom: 8 }} />
-                  )}
+                  {row.diagram_svg ? (
+                    <div style={{ marginBottom: 8 }}>
+                      <p style={{ fontSize: 11, fontWeight: 700, color: 'var(--success)', marginBottom: 4 }}>✓ Reconstructed diagram (admin-approved)</p>
+                      <div style={{ maxWidth: 320, borderRadius: 'var(--r)', border: '1px solid var(--border)', padding: 8, background: '#fff' }}
+                        dangerouslySetInnerHTML={{ __html: row.diagram_svg }} />
+                      <button onClick={() => importBatchAPI.updateStaged(id, row.id, { diagram_svg: null }).then(load)}
+                        style={{ ...btnS(false), fontSize: 11, marginTop: 6 }}>Revert to original photo</button>
+                    </div>
+                  ) : row.media_url ? (
+                    <div style={{ marginBottom: 8 }}>
+                      <img src={row.media_url} alt="Diagram" style={{ maxWidth: 280, borderRadius: 'var(--r)', border: '1px solid var(--border)', marginBottom: 6, display: 'block' }} />
+                      {!reconstructPreview[row.id] ? (
+                        <button onClick={() => reconstructDiagram(row.id)} disabled={reconstructing === row.id}
+                          style={{ ...btnS(false), color: 'var(--brand-light)', borderColor: 'var(--brand-light)' }}>
+                          {reconstructing === row.id ? 'Reconstructing…' : '🎨 Reconstruct as Clean SVG'}
+                        </button>
+                      ) : (
+                        <div style={{ padding: 12, background: 'var(--bg-raised)', borderRadius: 'var(--r)', border: '1px solid var(--border)' }}>
+                          <p style={{ fontSize: 11, fontWeight: 700, marginBottom: 8, color: 'var(--text-muted)' }}>
+                            Compare against the original photo above — confidence: <span style={{ color: reconstructPreview[row.id].confidence === 'high' ? 'var(--success)' : reconstructPreview[row.id].confidence === 'low' ? 'var(--danger)' : 'var(--warning)' }}>{reconstructPreview[row.id].confidence}</span>
+                          </p>
+                          <div style={{ maxWidth: 320, borderRadius: 'var(--r)', border: '1px solid var(--border)', padding: 8, background: '#fff', marginBottom: 8 }}
+                            dangerouslySetInnerHTML={{ __html: reconstructPreview[row.id].svg }} />
+                          {reconstructPreview[row.id].elements_description && (
+                            <p style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 6 }}>
+                              <strong>AI identified:</strong> {reconstructPreview[row.id].elements_description}
+                            </p>
+                          )}
+                          {reconstructPreview[row.id].uncertain_elements?.length > 0 && (
+                            <p style={{ fontSize: 12, color: 'var(--warning)', marginBottom: 8 }}>
+                              ⚠ Uncertain about: {reconstructPreview[row.id].uncertain_elements.join(', ')}
+                            </p>
+                          )}
+                          <div style={{ display: 'flex', gap: 8 }}>
+                            <button onClick={() => acceptReconstruction(row.id)} style={{ ...btnS(true), color: 'var(--success)', borderColor: 'var(--success)' }}>✓ Accept — matches the original</button>
+                            <button onClick={() => discardReconstruction(row.id)} style={{ ...btnS(false), color: 'var(--danger)' }}>Discard</button>
+                            <button onClick={() => reconstructDiagram(row.id)} disabled={reconstructing === row.id} style={btnS(false)}>Try Again</button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ) : null}
                 </>
               )}
             </div>

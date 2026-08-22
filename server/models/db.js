@@ -671,6 +671,25 @@ async function createSchema() {
   } catch (e) { /* already exists */ }
 
   console.log('✅ Database schema ready');
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // Milestone E2: AI diagram reconstruction
+  // ═══════════════════════════════════════════════════════════════════════
+  // Separate from media_url (the original cropped photo, which stays as the
+  // admin's reference/fallback). diagram_svg only gets set when an admin
+  // explicitly clicks "Reconstruct Diagram" and accepts the result — never
+  // automatically, since an AI-generated geometry diagram can look plausible
+  // while being subtly wrong, and that's worse than a slightly rough photo.
+  try {
+    await db.execute(`ALTER TABLE staged_questions ADD COLUMN diagram_svg LONGTEXT NULL`);
+    console.log('✅ staged_questions.diagram_svg column added');
+  } catch (e) { /* already exists */ }
+  try {
+    await db.execute(`ALTER TABLE questions ADD COLUMN diagram_svg LONGTEXT NULL`);
+    console.log('✅ questions.diagram_svg column added');
+  } catch (e) { /* already exists */ }
+
+  console.log('✅ Diagram reconstruction schema ready');
 }
 
 module.exports = { initDB, getDB };
