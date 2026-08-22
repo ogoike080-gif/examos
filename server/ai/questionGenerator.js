@@ -1,5 +1,4 @@
 const { GoogleGenAI } = require('@google/genai');
-const { cleanQuestionFields, cleanMathNotation } = require('../utils/mathNotation');
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 const MODEL = 'gemini-3.1-flash-lite';
@@ -86,6 +85,7 @@ Requirements:
 - One correct answer per question
 - Include brief explanation
 - Appropriate for West African secondary school level
+- For any mathematical content — fractions, exponents, roots, angles, equations — write it as LaTeX wrapped in single dollar signs, e.g. $x^2 + 3x - 4 = 0$, $\\frac{1}{2}$, $30^\\circ$. This gets rendered with a real math typesetting engine.
 
 Respond in JSON only (no markdown, no backticks):
 {
@@ -109,7 +109,10 @@ Respond in JSON only (no markdown, no backticks):
   });
 
   const data = extractJSON(response.text);
-  return Array.isArray(data.questions) ? data.questions.map(cleanQuestionFields) : data.questions;
+  // Preserve $...$ LaTeX markup as-is — the frontend renders it with KaTeX
+  // now (see MathText.jsx) rather than flattening it to a Unicode
+  // approximation, which lost real math structure (fractions, matrices).
+  return data.questions;
 }
 
 /**
@@ -234,7 +237,8 @@ Rules:
 - When has_diagram is true, look carefully at where that figure actually sits on the page and estimate its bounding box as accurately as you can — tight enough to exclude unrelated neighbouring questions, generous enough not to clip the figure itself. Getting this roughly right is far more useful than leaving it null.
 - Many exam-paper photos use TWO OR THREE COLUMNS of numbered questions side by side. Read the ENTIRE left-most column first, top to bottom, before moving to the next column to its right. Do not skip the first one or two items near the top of a column — they are easy to miss and just as important as the rest. Before finishing, count the questions you found and check the numbers form a continuous, unbroken sequence (1, 2, 3, 4...) with no gaps — if a number is missing, go back and look for it before submitting your answer.
 - Never invent a number — use exactly what's printed on the page. If a page has no visible numbering at all, use your best sequential guess but set confidence to "low".
-- Never guess a correct answer or invent an explanation that isn't actually shown on the page.`;
+- Never guess a correct answer or invent an explanation that isn't actually shown on the page.
+- For any mathematical content — fractions, exponents, roots, angles, algebraic expressions, equations, Greek letters, inequalities, matrices — write it as LaTeX wrapped in single dollar signs, e.g. $x^2 + 3x - 4 = 0$, $\\frac{1}{2}$, $30^\\circ$, $\\sqrt{25}$. This gets rendered with a real math typesetting engine, so correct LaTeX syntax matters more than it would in plain text. Leave ordinary non-mathematical text outside the dollar signs.`;
 
   let response;
   try {
@@ -269,14 +273,10 @@ Rules:
   }
 
   const parsed = extractJSON(response.text);
-  // Normalize LaTeX-style math markup ($x^2$, \frac{}{}, \circ) the model
-  // sometimes outputs into plain readable text — the app has no LaTeX
-  // renderer, so raw markup would otherwise show verbatim to students.
-  return {
-    ...parsed,
-    questions: Array.isArray(parsed.questions) ? parsed.questions.map(cleanQuestionFields) : parsed.questions,
-    answers: Array.isArray(parsed.answers) ? parsed.answers.map(cleanQuestionFields) : parsed.answers,
-  };
+  // Preserve $...$ LaTeX markup as-is — MathText.jsx renders it with KaTeX on
+  // the frontend now, so raw math notation from the model is exactly what we
+  // want stored, not a flattened Unicode approximation.
+  return parsed;
 }
 
 /**
@@ -346,7 +346,8 @@ Rules:
 - If the draft was already accurate, return it unchanged with changed_from_draft: false.
 - Only change a field if you can clearly read something different from the draft on the actual page — never invent text that isn't visibly printed.
 - If you genuinely cannot locate or read this question on the page, set found_on_page to false and leave the other fields as the original draft values.
-- Do not guess a correct answer that isn't marked, circled, or otherwise indicated on the page — list it in unreadable_fields instead.`;
+- Do not guess a correct answer that isn't marked, circled, or otherwise indicated on the page — list it in unreadable_fields instead.
+- Write any mathematical content as LaTeX wrapped in single dollar signs, e.g. $x^2$, $30^\\circ$ — this gets rendered with a real math typesetting engine.`;
 
   try {
     const response = await ai.models.generateContent({
@@ -362,7 +363,8 @@ Rules:
       ],
     });
     const verdict = extractJSON(response.text);
-    return cleanQuestionFields(verdict);
+    // Preserve $...$ LaTeX markup as-is — see the note in extractQuestionsFromImage above.
+    return verdict;
   } catch (err) {
     console.error('Pass 5 re-verification failed:', err.message);
     // Fail safe: report nothing changed rather than crash the batch —
@@ -451,7 +453,8 @@ Respond in JSON only (no markdown, no backticks):
 Rules:
 - Only set solvable: true if you can actually work through the problem and confidently arrive at one of the given options.
 - If the question is ambiguous, relies on a diagram/table you can't see from text alone, or none of the options match your computed answer, set solvable: false and explain why in solution_steps.
-- Show real working, not just the answer — this will be reviewed by a teacher before students see it.`;
+- Show real working, not just the answer — this will be reviewed by a teacher before students see it.
+- Write any mathematical content in solution_steps as LaTeX wrapped in single dollar signs, e.g. $x = \\frac{-b \\pm \\sqrt{b^2-4ac}}{2a}$ — this gets rendered with a real math typesetting engine.`;
 
   try {
     const response = await ai.models.generateContent({
@@ -459,7 +462,7 @@ Rules:
       contents: prompt,
     });
     const result = extractJSON(response.text);
-    if (result.solution_steps) result.solution_steps = cleanMathNotation(result.solution_steps);
+    // Preserve $...$ LaTeX in solution_steps as-is — rendered with KaTeX.
     return result;
   } catch (err) {
     console.error('solveObjectiveQuestion failed:', err.message);

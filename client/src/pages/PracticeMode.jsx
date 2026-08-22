@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import axios from 'axios';
 import { ThemeToggle } from '../components/ThemeProvider';
 import Calculator from './candidate/Calculator';
+import MathText from '../components/MathText';
 
 const API = '/api';
 const LETTERS = ['A','B','C','D','E'];
@@ -435,7 +436,7 @@ function PracticeEngine({ config, onFinish }) {
           </div>
 
           <div style={{ background:'var(--bg-surface)', border:'1px solid var(--border)', borderRadius:'var(--r-xl)', padding:'18px 20px', marginBottom:14, fontSize:15, lineHeight:1.8, fontWeight:500 }}>
-            {q.question_text}
+            <MathText text={q.question_text} />
             {q.media_url && (
               <img src={q.media_url} alt="Question diagram" style={{ display:'block', maxWidth:'100%', maxHeight:340, marginTop:14, borderRadius:'var(--r-lg)', border:'1px solid var(--border)' }} />
             )}
@@ -462,7 +463,7 @@ function PracticeEngine({ config, onFinish }) {
                   WebkitTapHighlightColor:'transparent',
                 }}>
                   <div style={{ width:30, height:30, borderRadius:8, flexShrink:0, background: isSelected||isRevealed&&correct ? border : 'var(--bg-raised)', border:`1.5px solid ${border}`, display:'flex', alignItems:'center', justifyContent:'center', fontFamily:'var(--font-display)', fontSize:12, fontWeight:800, color: isSelected || (isRevealed&&correct) ? '#fff' : 'var(--text-muted)', transition:'all var(--t-fast)' }}>{LETTERS[i]}</div>
-                  <span style={{ fontSize:14, fontWeight: isSelected?600:400, color, lineHeight:1.5 }}>{opt}</span>
+                  <span style={{ fontSize:14, fontWeight: isSelected?600:400, color, lineHeight:1.5 }}><MathText text={opt} inline /></span>
                   {isRevealed && correct && <span style={{ marginLeft:'auto', fontSize:16 }}>✓</span>}
                   {isRevealed && isSelected && !correct && <span style={{ marginLeft:'auto', fontSize:16 }}>✗</span>}
                 </button>
@@ -474,7 +475,7 @@ function PracticeEngine({ config, onFinish }) {
           {isRevealed && q.explanation && (
             <div style={{ background:'var(--info-dim)', border:'1px solid var(--info)', borderRadius:'var(--r-xl)', padding:'14px 18px', fontSize:13, color:'var(--text-secondary)', lineHeight:1.7, animation:'fadeIn 0.3s both' }}>
               <div style={{ fontWeight:700, color:'var(--info)', marginBottom:6 }}>💡 Explanation</div>
-              {q.explanation}
+              <MathText text={q.explanation} />
             </div>
           )}
         </div>
@@ -575,7 +576,7 @@ function ResultsScreen({ result, config, onRetry, onNew }) {
                     </span>
                     <span style={{ fontSize:11, color:'var(--text-muted)' }}>Q{i+1}</span>
                   </div>
-                  <div style={{ fontSize:13, fontWeight:600, marginBottom:10, lineHeight:1.6 }}>{q.question_text}</div>
+                  <div style={{ fontSize:13, fontWeight:600, marginBottom:10, lineHeight:1.6 }}><MathText text={q.question_text} /></div>
                   <div style={{ display:'flex', flexDirection:'column', gap:5 }}>
                     {opts.map((opt,oi) => {
                       const isCorrect = correctAnswers.map(c=>c.toLowerCase().trim()).includes(opt.toLowerCase().trim());
@@ -583,7 +584,7 @@ function ResultsScreen({ result, config, onRetry, onNew }) {
                       return (
                         <div key={oi} style={{ display:'flex', alignItems:'center', gap:8, padding:'6px 10px', borderRadius:'var(--r)', fontSize:12, background:isCorrect?'var(--success-dim)':isUser&&!isCorrect?'var(--danger-dim)':'transparent' }}>
                           <span style={{ fontFamily:'var(--font-mono)', fontSize:10, fontWeight:700, color:'var(--text-muted)' }}>{LETTERS[oi]}</span>
-                          <span style={{ color:isCorrect?'var(--success)':isUser&&!isCorrect?'var(--danger)':'var(--text-secondary)' }}>{opt}</span>
+                          <span style={{ color:isCorrect?'var(--success)':isUser&&!isCorrect?'var(--danger)':'var(--text-secondary)' }}><MathText text={opt} inline /></span>
                           {isCorrect && <span style={{ marginLeft:'auto', fontSize:12 }}>✓</span>}
                           {isUser && !isCorrect && <span style={{ marginLeft:'auto', fontSize:12 }}>✗</span>}
                         </div>
@@ -592,7 +593,7 @@ function ResultsScreen({ result, config, onRetry, onNew }) {
                   </div>
                   {q.explanation && (
                     <div style={{ marginTop:10, padding:'10px 12px', background:'var(--info-dim)', borderRadius:'var(--r)', fontSize:12, color:'var(--text-secondary)', lineHeight:1.6 }}>
-                      <strong style={{ color:'var(--info)' }}>Explanation:</strong> {q.explanation}
+                      <strong style={{ color:'var(--info)' }}>Explanation:</strong> <MathText text={q.explanation} inline />
                     </div>
                   )}
                 </div>

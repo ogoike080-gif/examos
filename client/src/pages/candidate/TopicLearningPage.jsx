@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { syllabusAPI, textbookAPI, questionAPI } from '../../utils/api';
+import MathText from '../../components/MathText';
 
 const sectionS = { marginBottom: 18 };
 const sectionTitleS = { fontSize: 13, fontWeight: 800, color: 'var(--brand-light)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.04em' };
@@ -184,7 +185,7 @@ export default function TopicLearningPage() {
             return (
               <div>
                 <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 10 }}>Question {practiceIndex + 1} of {practiceQuestions.length}</p>
-                <p style={{ fontSize: 15, fontWeight: 600, marginBottom: 14 }}>{q.question_text}</p>
+                <p style={{ fontSize: 15, fontWeight: 600, marginBottom: 14 }}><MathText text={q.question_text} /></p>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 14 }}>
                   {options.map((opt, i) => {
                     const isCorrect = correct.includes(opt);
@@ -197,14 +198,14 @@ export default function TopicLearningPage() {
                     return (
                       <button key={i} onClick={() => selectPracticeAnswer(opt)} disabled={practiceSelected !== null}
                         style={{ textAlign: 'left', padding: '12px 14px', borderRadius: 'var(--r-lg)', border: `1.5px solid ${border}`, background: bg, color, cursor: practiceSelected === null ? 'pointer' : 'default', fontSize: 14 }}>
-                        {String.fromCharCode(65 + i)}. {opt}
+                        {String.fromCharCode(65 + i)}. <MathText text={opt} inline />
                       </button>
                     );
                   })}
                 </div>
                 {practiceSelected !== null && q.explanation && (
                   <p style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 14, padding: 12, background: 'var(--bg-raised)', borderRadius: 'var(--r)' }}>
-                    {q.explanation}
+                    <MathText text={q.explanation} />
                   </p>
                 )}
                 {practiceSelected !== null && (
@@ -226,7 +227,7 @@ export default function TopicLearningPage() {
         <>
           <div style={{ padding: 16, background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 'var(--r-xl)' }}>
             <p style={sectionTitleS}>What You Will Learn</p>
-            <p style={bodyTextS}>{content.learning_objectives}</p>
+            <MathText text={content.learning_objectives} style={bodyTextS} />
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -256,14 +257,14 @@ export default function TopicLearningPage() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
           <button onClick={() => setReading(false)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', fontSize: 13, cursor: 'pointer', textAlign: 'left', padding: 0, marginBottom: 8 }}>← Back to topic overview</button>
 
-          <div style={sectionS}><p style={sectionTitleS}>Key Concepts</p><p style={bodyTextS}>{content.key_concepts}</p></div>
+          <div style={sectionS}><p style={sectionTitleS}>Key Concepts</p><MathText text={content.key_concepts} style={bodyTextS} /></div>
           {content.formulas && content.formulas.toLowerCase() !== 'none applicable' && (
-            <div style={sectionS}><p style={sectionTitleS}>Formulas</p><p style={bodyTextS}>{content.formulas}</p></div>
+            <div style={sectionS}><p style={sectionTitleS}>Formulas</p><MathText text={content.formulas} style={bodyTextS} /></div>
           )}
-          <div style={sectionS}><p style={sectionTitleS}>Definitions</p><p style={bodyTextS}>{content.definitions}</p></div>
-          <div style={sectionS}><p style={sectionTitleS}>Worked Examples</p><p style={bodyTextS}>{content.worked_examples}</p></div>
-          <div style={sectionS}><p style={sectionTitleS}>Exam Tips</p><p style={bodyTextS}>{content.exam_tips}</p></div>
-          <div style={sectionS}><p style={sectionTitleS}>Common Mistakes</p><p style={bodyTextS}>{content.common_mistakes}</p></div>
+          <div style={sectionS}><p style={sectionTitleS}>Definitions</p><MathText text={content.definitions} style={bodyTextS} /></div>
+          <div style={sectionS}><p style={sectionTitleS}>Worked Examples</p><MathText text={content.worked_examples} style={bodyTextS} /></div>
+          <div style={sectionS}><p style={sectionTitleS}>Exam Tips</p><MathText text={content.exam_tips} style={bodyTextS} /></div>
+          <div style={sectionS}><p style={sectionTitleS}>Common Mistakes</p><MathText text={content.common_mistakes} style={bodyTextS} /></div>
 
           <p style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
             This material was AI-drafted and reviewed by your school before publishing.

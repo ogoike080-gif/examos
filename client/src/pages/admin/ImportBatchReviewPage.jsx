@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { importBatchAPI, syllabusAPI } from '../../utils/api';
+import MathText from '../../components/MathText';
 
 const STATUS_META = {
   verified:        { label: 'Verified',        bg: 'var(--success-dim)', fg: 'var(--success)' },
@@ -467,12 +468,12 @@ export default function ImportBatchReviewPage() {
                 </div>
               ) : (
                 <>
-                  <p style={{ fontSize: 14, marginBottom: 8 }}>{row.question_text}</p>
+                  <p style={{ fontSize: 14, marginBottom: 8 }}><MathText text={row.question_text} /></p>
                   {parseArr(row.options).length > 0 && (
                     <ul style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 8, paddingLeft: 18 }}>
                       {parseArr(row.options).map((o, i) => (
                         <li key={i} style={{ color: parseArr(row.correct_answers).includes(o) ? 'var(--success)' : 'var(--text-secondary)', fontWeight: parseArr(row.correct_answers).includes(o) ? 700 : 400 }}>
-                          {String.fromCharCode(65 + i)}. {o}
+                          {String.fromCharCode(65 + i)}. <MathText text={o} inline />
                         </li>
                       ))}
                     </ul>
