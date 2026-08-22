@@ -2,6 +2,8 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import axios from 'axios';
 import { readOfflineCache, writeOfflineCache } from '../utils/offlineCache';
+import MathText from '../components/MathText';
+import ExplanationBox from '../components/ExplanationBox';
 
 const API = '/api';
 const LETTERS = ['A','B','C','D','E'];
@@ -648,7 +650,7 @@ function ExamScreen({ config, onFinish }) {
 
             {/* Question text */}
             <div style={{ background:'#fff', border:'1px solid #E2E8F0', borderRadius:12, padding:'20px 22px', marginBottom:18, fontSize:15, lineHeight:1.85, color:'#1E293B', fontWeight:500, boxShadow:'0 1px 4px rgba(0,0,0,0.05)' }}>
-              {q.question_text}
+              <MathText text={q.question_text} />
               {q.media_url && !lowData && (
                 <img src={q.media_url} alt="Question diagram" style={{ display:'block', maxWidth:'100%', maxHeight:340, marginTop:14, borderRadius:10, border:'1px solid #E2E8F0' }} />
               )}
@@ -685,7 +687,7 @@ function ExamScreen({ config, onFinish }) {
                     {/* Letter */}
                     <span style={{ fontSize:13, fontWeight:800, color:radioColor, flexShrink:0, minWidth:16, marginTop:1 }}>{LETTERS[i]}</span>
                     {/* Text */}
-                    <span style={{ fontSize:14, fontWeight: isSelected?600:400, color:textColor, lineHeight:1.6 }}>{opt}</span>
+                    <span style={{ fontSize:14, fontWeight: isSelected?600:400, color:textColor, lineHeight:1.6 }}><MathText text={opt} inline /></span>
                     {isRevealed && isCorrect && <span style={{ marginLeft:'auto', fontSize:16, flexShrink:0 }}>✓</span>}
                     {isRevealed && isSelected && !isCorrect && <span style={{ marginLeft:'auto', fontSize:16, flexShrink:0 }}>✗</span>}
                   </button>
@@ -694,10 +696,9 @@ function ExamScreen({ config, onFinish }) {
             </div>
 
             {/* Explanation */}
-            {isRevealed && q.explanation && (
-              <div style={{ background:'#EFF6FF', border:'1px solid #BFDBFE', borderRadius:10, padding:'14px 16px', marginBottom:16, fontSize:13, color:'#1E40AF', lineHeight:1.7 }}>
-                <div style={{ fontWeight:700, marginBottom:6 }}>💡 Explanation</div>
-                {q.explanation}
+            {isRevealed && (
+              <div style={{ marginBottom:16 }}>
+                <ExplanationBox question={q} theme="light" />
               </div>
             )}
           </div>
@@ -833,7 +834,7 @@ function MobileExamScreen({
 
         {/* Question card */}
         <div style={{ background:'#1E293B', border:'1px solid rgba(255,255,255,0.08)', borderRadius:16, padding:'18px 18px', marginBottom:16, fontSize:17, lineHeight:1.65, color:'#F1F5F9', fontWeight:500 }}>
-          {q.question_text}
+          <MathText text={q.question_text} />
           {q.media_url && !lowData && (
             <img src={q.media_url} alt="Question diagram" style={{ display:'block', maxWidth:'100%', maxHeight:280, marginTop:14, borderRadius:10, border:'1px solid rgba(255,255,255,0.1)' }} />
           )}
@@ -872,7 +873,7 @@ function MobileExamScreen({
                   display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0,
                   fontSize:13, fontWeight:800, color: isSelected||(isRevealed&&isCorrect) ? '#fff' : badgeColor,
                 }}>{LETTERS[i]}</span>
-                <span style={{ fontSize:15, fontWeight: isSelected?600:400, color:textColor, lineHeight:1.5, flex:1 }}>{opt}</span>
+                <span style={{ fontSize:15, fontWeight: isSelected?600:400, color:textColor, lineHeight:1.5, flex:1 }}><MathText text={opt} inline /></span>
                 {isRevealed && isCorrect && <span style={{ fontSize:18, flexShrink:0 }}>✓</span>}
                 {isRevealed && isSelected && !isCorrect && <span style={{ fontSize:18, flexShrink:0 }}>✗</span>}
               </button>
@@ -881,10 +882,9 @@ function MobileExamScreen({
         </div>
 
         {/* Explanation */}
-        {isRevealed && q.explanation && (
-          <div style={{ background:'rgba(37,99,235,0.1)', border:'1px solid rgba(59,130,246,0.3)', borderRadius:12, padding:'14px 16px', marginBottom:16, fontSize:13.5, color:'#BFDBFE', lineHeight:1.7 }}>
-            <div style={{ fontWeight:700, marginBottom:6, color:'#93C5FD' }}>💡 Explanation</div>
-            {q.explanation}
+        {isRevealed && (
+          <div style={{ marginBottom:16 }}>
+            <ExplanationBox question={q} theme="dark" />
           </div>
         )}
       </div>
@@ -1099,7 +1099,7 @@ function ResultsScreen({ result, config, onRetry, onNew }) {
                     <span style={{ fontSize:11, fontWeight:700, padding:'2px 10px', borderRadius:20, background:isOk?'#DCFCE7':userAns?'#FEE2E2':'#F1F5F9', color:isOk?'#16A34A':userAns?'#DC2626':'#64748B' }}>{isOk?'✓ Correct':userAns?'✗ Wrong':'— Skipped'}</span>
                     <span style={{ fontSize:11, color:'#94A3B8' }}>Q{i+1}</span>
                   </div>
-                  <div style={{ fontSize:14, fontWeight:600, color:'#1E293B', marginBottom:10, lineHeight:1.6 }}>{q.question_text}</div>
+                  <div style={{ fontSize:14, fontWeight:600, color:'#1E293B', marginBottom:10, lineHeight:1.6 }}><MathText text={q.question_text} /></div>
                   <div style={{ display:'flex', flexDirection:'column', gap:5 }}>
                     {opts.map((opt,oi)=>{
                       const isCrt = correct.includes(opt.toLowerCase().trim());
@@ -1107,18 +1107,16 @@ function ResultsScreen({ result, config, onRetry, onNew }) {
                       return (
                         <div key={oi} style={{ display:'flex', alignItems:'center', gap:8, padding:'7px 12px', borderRadius:8, fontSize:13, background:isCrt?'#F0FDF4':isUsr&&!isCrt?'#FEF2F2':'transparent' }}>
                           <span style={{ fontWeight:800, fontSize:11, color:'#94A3B8', minWidth:14 }}>{LETTERS[oi]}</span>
-                          <span style={{ color:isCrt?'#16A34A':isUsr&&!isCrt?'#DC2626':'#374151' }}>{opt}</span>
+                          <span style={{ color:isCrt?'#16A34A':isUsr&&!isCrt?'#DC2626':'#374151' }}><MathText text={opt} inline /></span>
                           {isCrt&&<span style={{ marginLeft:'auto' }}>✓</span>}
                           {isUsr&&!isCrt&&<span style={{ marginLeft:'auto' }}>✗</span>}
                         </div>
                       );
                     })}
                   </div>
-                  {q.explanation&&(
-                    <div style={{ marginTop:10, padding:'10px 14px', background:'#EFF6FF', borderRadius:8, fontSize:12, color:'#1E40AF', lineHeight:1.7 }}>
-                      <b>💡 Explanation:</b> {q.explanation}
-                    </div>
-                  )}
+                  <div style={{ marginTop:10 }}>
+                    <ExplanationBox question={q} theme="light" style={{ padding: '10px 14px', fontSize: 12 }} />
+                  </div>
                 </div>
               );
             })}

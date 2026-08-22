@@ -1,0 +1,20 @@
+# Tells Railway how to build this repo: server/ (Express API) and client/
+# (Vite React app) as siblings, with the server serving the client's built
+# output in production (see server/index.js — it serves ../client/dist and
+# falls through to index.html for React Router). One Railway service, one
+# Node process, no separate static hosting needed.
+
+[phases.setup]
+nixPkgs = ["nodejs_20"]
+
+[phases.install]
+cmds = [
+  "cd client && npm install",
+  "cd server && npm install",
+]
+
+[phases.build]
+cmds = ["cd client && npm run build"]
+
+[start]
+cmd = "cd server && npm start"

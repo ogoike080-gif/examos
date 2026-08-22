@@ -41,6 +41,7 @@ export const questionAPI = {
   delete: (id) => axios.delete(`${API}/questions/${id}`),
   bulkUpload: (questions) => axios.post(`${API}/questions/bulk`, { questions }),
   aiGenerate: (data) => axios.post(`${API}/questions/ai-generate`, data),
+  generateExplanation: (id) => axios.post(`${API}/questions/${id}/generate-explanation`),
   subjects: () => axios.get(`${API}/questions/subjects/list`),
   uploadImage: (file) => {
     const fd = new FormData();

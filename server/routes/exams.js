@@ -285,6 +285,7 @@ router.get('/sessions/:sessionId/review', authenticate, async (req, res) => {
         }
       }
       return {
+        id: q.id,
         number: i + 1,
         question_text: q.question_text,
         question_type: q.question_type,

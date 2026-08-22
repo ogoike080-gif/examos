@@ -471,6 +471,43 @@ Rules:
 }
 
 /**
+ * Generates a step-by-step explanation for a question whose correct answer
+ * is ALREADY known — distinct from solveObjectiveQuestion, which is used
+ * during import to work out an answer that isn't recorded anywhere yet.
+ * This is for the common case of a live, published question that has a
+ * correct_answers value but an empty explanation field (e.g. older imports
+ * done before explanations were required). Since the answer is already
+ * confirmed, this only needs to narrate the reasoning to it, not verify it.
+ */
+async function explainAnswer({ question_text, options, correct_answers, subject }) {
+  const correctList = Array.isArray(correct_answers) ? correct_answers : [];
+  const prompt = `You are an experienced ${subject || ''} exam tutor. A student just answered this question and wants to understand how the correct answer is reached.
+
+Question: ${question_text}
+
+Options:
+${(options || []).map((o, i) => `${String.fromCharCode(65 + i)}. ${o}`).join('\n')}
+
+Confirmed correct answer: ${correctList.join(', ') || '(not specified)'}
+
+Write a clear, concise, step-by-step explanation of how a student arrives at the correct answer — walk through the method/reasoning, not just a restatement of the answer. Suitable for a West African secondary school student preparing for WAEC/JAMB/NECO. Keep it focused: a few sentences to a short paragraph, not an essay.
+
+Write any mathematical content as LaTeX wrapped in single dollar signs, e.g. $x^2 + 3x - 4 = 0$, $\\frac{1}{2}$, $30^\\circ$ — this gets rendered with a real math typesetting engine, so don't convert it to Unicode or plain text yourself.
+
+Respond in JSON only (no markdown, no backticks):
+{
+  "explanation": "..."
+}`;
+
+  const response = await ai.models.generateContent({
+    model: MODEL,
+    contents: prompt,
+  });
+  const result = extractJSON(response.text);
+  return result.explanation || '';
+}
+
+/**
  * Reconstructs a cropped diagram photo as clean, native SVG markup —
  * Milestone E2. This is the highest-risk piece of the "no screenshots"
  * redesign: an AI-generated geometry diagram can look plausible while being
@@ -596,6 +633,7 @@ module.exports = {
   reverifyLowConfidenceQuestion,
   generateTopicContent,
   solveObjectiveQuestion,
+  explainAnswer,
   chatWithStudyAssistant,
   reconstructDiagramSVG,
   qualityCheckDiagram,

@@ -1,9 +1,9 @@
 node_modules/
-client/node_modules/
-server/node_modules/
 .env
-server/.env
+.env.*
+!.env.example
 client/dist/
+server/uploads/*
+!server/uploads/.gitkeep
 *.log
-server/uploads/
-API ENV.txt
+.DS_Store

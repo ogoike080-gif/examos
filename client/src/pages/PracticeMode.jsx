@@ -4,6 +4,7 @@ import axios from 'axios';
 import { ThemeToggle } from '../components/ThemeProvider';
 import Calculator from './candidate/Calculator';
 import MathText from '../components/MathText';
+import ExplanationBox from '../components/ExplanationBox';
 
 const API = '/api';
 const LETTERS = ['A','B','C','D','E'];
@@ -474,11 +475,8 @@ function PracticeEngine({ config, onFinish }) {
           </div>
 
           {/* Explanation (practice mode) */}
-          {isRevealed && q.explanation && (
-            <div style={{ background:'var(--info-dim)', border:'1px solid var(--info)', borderRadius:'var(--r-xl)', padding:'14px 18px', fontSize:13, color:'var(--text-secondary)', lineHeight:1.7, animation:'fadeIn 0.3s both' }}>
-              <div style={{ fontWeight:700, color:'var(--info)', marginBottom:6 }}>💡 Explanation</div>
-              <MathText text={q.explanation} />
-            </div>
+          {isRevealed && (
+            <ExplanationBox question={q} theme="light" style={{ background:'var(--info-dim)', border:'1px solid var(--info)', borderRadius:'var(--r-xl)', padding:'14px 18px', animation:'fadeIn 0.3s both' }} />
           )}
         </div>
       </main>
@@ -593,11 +591,9 @@ function ResultsScreen({ result, config, onRetry, onNew }) {
                       );
                     })}
                   </div>
-                  {q.explanation && (
-                    <div style={{ marginTop:10, padding:'10px 12px', background:'var(--info-dim)', borderRadius:'var(--r)', fontSize:12, color:'var(--text-secondary)', lineHeight:1.6 }}>
-                      <strong style={{ color:'var(--info)' }}>Explanation:</strong> <MathText text={q.explanation} inline />
-                    </div>
-                  )}
+                  <div style={{ marginTop:10 }}>
+                    <ExplanationBox question={q} theme="light" style={{ padding: '10px 12px', fontSize: 12 }} />
+                  </div>
                 </div>
               );
             })}

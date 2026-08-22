@@ -1,5 +1,6 @@
 import React from 'react';
 import MathText from './MathText';
+import ExplanationBox from './ExplanationBox';
 
 const LETTERS = ['A', 'B', 'C', 'D', 'E', 'F'];
 
@@ -101,10 +102,9 @@ export default function QuestionCard({
       </div>
 
       {/* Explanation */}
-      {revealed && question.explanation && (
-        <div style={{ margin: '0 22px 22px', padding: '14px 16px', background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: 10, fontSize: 13, color: '#1E40AF', lineHeight: 1.7 }}>
-          <div style={{ fontWeight: 700, marginBottom: 6 }}>💡 Explanation</div>
-          <MathText text={question.explanation} />
+      {revealed && (
+        <div style={{ margin: '0 22px 22px' }}>
+          <ExplanationBox question={question} theme="light" />
         </div>
       )}
     </div>

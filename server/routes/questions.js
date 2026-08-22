@@ -5,7 +5,7 @@ const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 const { getDB } = require('../models/db');
 const { authenticate, authorize } = require('../middleware/auth');
-const { generateQuestionsWithAI, extractQuestionsFromImage } = require('../ai/questionGenerator');
+const { generateQuestionsWithAI, extractQuestionsFromImage, explainAnswer } = require('../ai/questionGenerator');
 const { cleanMathNotation, cleanQuestionFields } = require('../utils/mathNotation');
 const AdmZip = require('adm-zip');
 const sharp = require('sharp');
@@ -333,15 +333,69 @@ router.delete('/:id', authenticate, authorize('superadmin', 'admin'), async (req
   }
 });
 
-// POST /api/questions/clean-math-notation — one-time cleanup for questions
-// already imported before the extraction pipeline started normalizing LaTeX
-// markup ($x^2$, \frac{}{}, \circ) into plain text. Scans every active
-// question, cleans question_text/options/explanation, and only writes back
-// rows that actually changed. Safe to run repeatedly — already-clean rows
-// are no-ops. Optionally scoped to one subject/exam_body via query params
-// so it can be run narrowly (e.g. just the WAEC 1988 batch) instead of the
-// whole bank at once.
-router.post('/clean-math-notation', authenticate, authorize('superadmin', 'admin'), async (req, res) => {
+// POST /api/questions/:id/generate-explanation — fills in a missing
+// explanation on demand (e.g. a student reveals an answer on a question that
+// was imported/created without one). Persists the result back onto the
+// question row, so this only ever runs once per question globally — every
+// later view of the same question gets the cached explanation straight from
+// the DB with no further AI call. Any authenticated user can trigger this
+// (not admin-only) since it's routinely hit by candidates reviewing their
+// own answers, not just staff.
+router.post('/:id/generate-explanation', authenticate, async (req, res) => {
+  try {
+    const db = getDB();
+    const [rows] = await db.execute(
+      `SELECT q.id, q.question_text, q.options, q.correct_answers, q.explanation, s.name AS subject_name
+       FROM questions q LEFT JOIN subjects s ON q.subject_id = s.id
+       WHERE q.id = ?`,
+      [req.params.id]
+    );
+    const question = rows[0];
+    if (!question) return res.status(404).json({ error: 'Question not found' });
+
+    if (question.explanation && question.explanation.trim()) {
+      return res.json({ explanation: question.explanation, cached: true });
+    }
+
+    const options = Array.isArray(question.options) ? question.options
+      : (() => { try { return JSON.parse(question.options || '[]'); } catch { return []; } })();
+    const correct_answers = Array.isArray(question.correct_answers) ? question.correct_answers
+      : (() => { try { return JSON.parse(question.correct_answers || '[]'); } catch { return []; } })();
+
+    if (!correct_answers.length) {
+      return res.status(400).json({ error: 'This question has no recorded correct answer to explain from' });
+    }
+
+    const explanation = await explainAnswer({
+      question_text: question.question_text,
+      options,
+      correct_answers,
+      subject: question.subject_name,
+    });
+
+    if (!explanation) {
+      return res.status(502).json({ error: 'Could not generate an explanation right now — try again shortly' });
+    }
+
+    await db.execute('UPDATE questions SET explanation=? WHERE id=?', [explanation, question.id]);
+    res.json({ explanation, cached: false });
+  } catch (err) {
+    console.error('POST /questions/:id/generate-explanation error:', err.message);
+    res.status(500).json({ error: 'Failed to generate explanation' });
+  }
+});
+
+// POST /api/questions/clean-math-notation — LEGACY, from before the client
+// rendered LaTeX at all. Back then $x^2$ showed up as raw ugly syntax to
+// students, so this route flattened it to Unicode approximations. That's no
+// longer true: MathText.jsx now renders $...$ with real KaTeX, so this route
+// (and the cleanMathNotation() it calls) would actively DESTROY good LaTeX —
+// stripping the $ delimiters and collapsing fractions/roots to lossy plain
+// text — if run today. cleanMathNotation() itself now leaves $...$ spans
+// alone (see utils/mathNotation.js), so this route is effectively inert, but
+// it's kept superadmin-only and undocumented in the admin UI on purpose.
+// Don't wire this into a button without re-reading this comment first.
+router.post('/clean-math-notation', authenticate, authorize('superadmin'), async (req, res) => {
   try {
     const db = getDB();
     const { subject_id, exam_body } = req.query;

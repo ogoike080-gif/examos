@@ -1,10 +1,18 @@
 // AI vision extraction sometimes outputs LaTeX-style math markup ($18^\circ$,
 // x^2, \frac{a}{b}) since that's a common way math appears in its training
-// data — but ExamOS has no LaTeX renderer, so it shows up as raw ugly syntax
-// to students instead of "18°" or "x²". This converts the common cases to
-// plain Unicode text. Not a full LaTeX parser — deliberately just handles
-// the patterns that actually show up in WAEC/JAMB-style exam papers
-// (degree symbols, simple exponents, fractions, roots, basic operators).
+// data. The client used to have no LaTeX renderer, so this used to flatten
+// ALL of it (including inside $...$) to plain Unicode. That's no longer
+// true — MathText.jsx now renders $...$ spans with real KaTeX — so this
+// must NOT touch anything inside a $...$ delimiter, or it destroys real,
+// correctly-typeset math (collapsing fractions, losing structure) in favor
+// of a worse Unicode approximation.
+//
+// What this still does, and why it's still useful: vision extraction
+// occasionally emits a LaTeX macro OUTSIDE any $...$ wrapper (e.g. it wrote
+// "the angle is \circ 30" instead of wrapping the math), which would
+// otherwise show a raw backslash to students. Those stray, unwrapped cases
+// still get flattened to Unicode. Anything already inside $...$ is left
+// completely alone for KaTeX to render.
 
 const SUPERSCRIPT_DIGITS = { '0':'⁰','1':'¹','2':'²','3':'³','4':'⁴','5':'⁵','6':'⁶','7':'⁷','8':'⁸','9':'⁹','-':'⁻' };
 
@@ -12,10 +20,9 @@ function toSuperscript(digits) {
   return digits.split('').map(d => SUPERSCRIPT_DIGITS[d] || d).join('');
 }
 
-function cleanMathNotation(input) {
-  if (typeof input !== 'string' || !input.includes('\\') && !input.includes('$')) return input;
-  let text = input;
-
+// Flattens stray (non-$-wrapped) LaTeX macros to Unicode. Never called on
+// text that's inside a $...$ span — see cleanMathNotation below.
+function flattenStrayLatex(text) {
   // \frac{a}{b} -> a/b (simple, non-nested cases — covers the vast majority
   // of exam-paper fractions)
   text = text.replace(/\\frac\{([^{}]+)\}\{([^{}]+)\}/g, '$1/$2');
@@ -62,14 +69,27 @@ function cleanMathNotation(input) {
   // Whatever's left is noise; the meaningful conversion already happened.
   text = text.replace(/\^/g, '');
 
-  // Strip $ / $$ delimiters (inline and display math wrappers) — they carry
-  // no meaning once nothing renders LaTeX.
-  text = text.replace(/\$\$?/g, '');
-
   // Any remaining unhandled macro (\something) — strip the backslash and
   // keep the word rather than showing a stray backslash to students.
   text = text.replace(/\\([a-zA-Z]+)/g, '$1');
   text = text.replace(/[{}]/g, '');
+
+  return text;
+}
+
+function cleanMathNotation(input) {
+  if (typeof input !== 'string' || (!input.includes('\\') && !input.includes('$'))) return input;
+
+  // Split on $...$ spans and only flatten the parts OUTSIDE them. Anything
+  // inside $...$ is real LaTeX the client renders with KaTeX — leave it
+  // completely untouched, delimiters included.
+  const parts = input.split(/(\$[^$]+\$)/g);
+  const text = parts
+    .map((part) => {
+      if (part.length > 2 && part.startsWith('$') && part.endsWith('$')) return part;
+      return part.includes('\\') ? flattenStrayLatex(part) : part;
+    })
+    .join('');
 
   return text.replace(/\s+/g, ' ').trim();
 }
