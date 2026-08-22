@@ -2,7 +2,6 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import axios from 'axios';
 import { readOfflineCache, writeOfflineCache } from '../utils/offlineCache';
-import MathText from '../components/MathText';
 
 const API = '/api';
 const LETTERS = ['A','B','C','D','E'];
@@ -17,6 +16,18 @@ function formatTime(s) {
   const h = Math.floor(s/3600), m = Math.floor((s%3600)/60), sec = s%60;
   if (h>0) return `${h}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;
   return `${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;
+}
+
+// Mobile gets a purpose-built layout (see MobileExamScreen below), desktop keeps
+// the existing sidebar-based one — this just decides which to render.
+function useIsMobile() {
+  const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth <= 768);
+  useEffect(() => {
+    const onResize = () => setIsMobile(window.innerWidth <= 768);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+  return isMobile;
 }
 
 // ── EXAM TYPES & SUBJECTS ─────────────────────────────────────
@@ -334,6 +345,7 @@ function ExamScreen({ config, onFinish }) {
   const ADAPT_CHUNK = 5;
   const timerRef = useRef(null);
   const submittedRef = useRef(false);
+  const isMobile = useIsMobile();
 
   useEffect(() => {
     const goOnline = () => setIsOnline(true);
@@ -494,9 +506,9 @@ function ExamScreen({ config, onFinish }) {
   }, [questions, answers]);
 
   if (loading) return (
-    <div style={{ minHeight:'100dvh', display:'flex', alignItems:'center', justifyContent:'center', flexDirection:'column', gap:16, background:'#F0F4F8' }}>
+    <div style={{ minHeight:'100dvh', display:'flex', alignItems:'center', justifyContent:'center', flexDirection:'column', gap:16, background: isMobile ? '#0F172A' : '#F0F4F8' }}>
       <div style={{ width:40, height:40, border:'4px solid #E2E8F0', borderTop:'4px solid #2563EB', borderRadius:'50%', animation:'spin 0.7s linear infinite' }}/>
-      <p style={{ color:'#64748B', fontFamily:"'Inter',sans-serif" }}>Loading {config.count} questions...</p>
+      <p style={{ color: isMobile ? 'rgba(255,255,255,0.7)' : '#64748B', fontFamily:"'Inter',sans-serif" }}>Loading {config.count} questions...</p>
     </div>
   );
 
@@ -518,6 +530,21 @@ function ExamScreen({ config, onFinish }) {
     return 'unanswered';
   };
   const palColors = { current:{bg:'#2563EB',color:'#fff',border:'#2563EB'}, answered:{bg:'#DCFCE7',color:'#16A34A',border:'#16A34A'}, bookmarked:{bg:'#FEF3C7',color:'#D97706',border:'#D97706'}, unanswered:{bg:'#fff',color:'#64748B',border:'#CBD5E1'} };
+
+  if (isMobile) {
+    return (
+      <MobileExamScreen
+        config={config} questions={questions} answers={answers} revealed={revealed}
+        bookmarked={bookmarked} current={current} setCurrent={setCurrent}
+        timeLeft={timeLeft} showCalc={showCalc} setShowCalc={setShowCalc}
+        attempts={attempts} isOnline={isOnline} usingOfflineCache={usingOfflineCache}
+        lowData={lowData} toggleLowData={toggleLowData} adaptiveDifficulty={adaptiveDifficulty}
+        selectAnswer={selectAnswer} handleSubmit={handleSubmit} setBookmarked={setBookmarked}
+        setRevealed={setRevealed} onFinish={onFinish} submittedRef={submittedRef}
+        paletteStatus={paletteStatus}
+      />
+    );
+  }
 
   return (
     <div style={{ minHeight:'100dvh', background:'#F0F4F8', fontFamily:"'Inter',sans-serif", display:'flex', flexDirection:'column' }}>
@@ -621,16 +648,15 @@ function ExamScreen({ config, onFinish }) {
 
             {/* Question text */}
             <div style={{ background:'#fff', border:'1px solid #E2E8F0', borderRadius:12, padding:'20px 22px', marginBottom:18, fontSize:15, lineHeight:1.85, color:'#1E293B', fontWeight:500, boxShadow:'0 1px 4px rgba(0,0,0,0.05)' }}>
-              <MathText text={q.question_text} />
-              {q.diagram_svg ? (
-                <div style={{ marginTop:14, maxWidth:'100%' }} dangerouslySetInnerHTML={{ __html: q.diagram_svg }} />
-              ) : q.media_url && !lowData ? (
+              {q.question_text}
+              {q.media_url && !lowData && (
                 <img src={q.media_url} alt="Question diagram" style={{ display:'block', maxWidth:'100%', maxHeight:340, marginTop:14, borderRadius:10, border:'1px solid #E2E8F0' }} />
-              ) : q.media_url && lowData ? (
+              )}
+              {q.media_url && lowData && (
                 <div style={{ marginTop:14, padding:'10px 14px', background:'#F1F5F9', borderRadius:10, border:'1px dashed #CBD5E1', fontSize:12.5, color:'#64748B' }}>
                   🖼️ Diagram hidden — Low Data mode is on
                 </div>
-              ) : null}
+              )}
             </div>
 
             {/* Options — radio style */}
@@ -659,7 +685,7 @@ function ExamScreen({ config, onFinish }) {
                     {/* Letter */}
                     <span style={{ fontSize:13, fontWeight:800, color:radioColor, flexShrink:0, minWidth:16, marginTop:1 }}>{LETTERS[i]}</span>
                     {/* Text */}
-                    <span style={{ fontSize:14, fontWeight: isSelected?600:400, color:textColor, lineHeight:1.6 }}><MathText text={opt} /></span>
+                    <span style={{ fontSize:14, fontWeight: isSelected?600:400, color:textColor, lineHeight:1.6 }}>{opt}</span>
                     {isRevealed && isCorrect && <span style={{ marginLeft:'auto', fontSize:16, flexShrink:0 }}>✓</span>}
                     {isRevealed && isSelected && !isCorrect && <span style={{ marginLeft:'auto', fontSize:16, flexShrink:0 }}>✗</span>}
                   </button>
@@ -671,7 +697,7 @@ function ExamScreen({ config, onFinish }) {
             {isRevealed && q.explanation && (
               <div style={{ background:'#EFF6FF', border:'1px solid #BFDBFE', borderRadius:10, padding:'14px 16px', marginBottom:16, fontSize:13, color:'#1E40AF', lineHeight:1.7 }}>
                 <div style={{ fontWeight:700, marginBottom:6 }}>💡 Explanation</div>
-                <MathText text={q.explanation} />
+                {q.explanation}
               </div>
             )}
           </div>
@@ -703,6 +729,298 @@ function ExamScreen({ config, onFinish }) {
     </div>
   );
 }
+
+// ── MOBILE EXAM SCREEN ───────────────────────────────────────
+// Purpose-built for phones: full-width question focus, no fixed sidebar,
+// question navigator lives in a bottom sheet instead of eating screen width.
+function MobileExamScreen({
+  config, questions, answers, revealed, bookmarked, current, setCurrent,
+  timeLeft, showCalc, setShowCalc, attempts, isOnline, usingOfflineCache,
+  lowData, toggleLowData, adaptiveDifficulty, selectAnswer, handleSubmit,
+  setBookmarked, setRevealed, onFinish, submittedRef, paletteStatus,
+}) {
+  const [showNav, setShowNav] = useState(false);
+  const [showTools, setShowTools] = useState(false);
+  const [showSubmitConfirm, setShowSubmitConfirm] = useState(false);
+
+  const q = questions[current];
+  if (!q) return null;
+  const opts = safeParseArray(q.options);
+  const correctAnswers = safeParseArray(q.correct_answers).map(c => c.toLowerCase().trim());
+  const selected = answers[q.id];
+  const isRevealed = revealed[q.id];
+  const isBookmarked = bookmarked.has(q.id);
+  const answeredCount = Object.keys(answers).length;
+  const remainingCount = questions.length - answeredCount;
+  const bookmarkedCount = bookmarked.size;
+  const isLast = current === questions.length - 1;
+  const isWarning = timeLeft < 300 && config.mode !== 'study';
+  const isCritical = timeLeft < 60 && config.mode !== 'study';
+  const progressPct = Math.round(((current + 1) / questions.length) * 100);
+
+  const palColors = { current:{bg:'#2563EB',color:'#fff',border:'#2563EB'}, answered:{bg:'#DCFCE7',color:'#16A34A',border:'#16A34A'}, bookmarked:{bg:'#FEF3C7',color:'#D97706',border:'#D97706'}, unanswered:{bg:'#fff',color:'#64748B',border:'#E2E8F0'} };
+
+  const goTo = (i) => { setCurrent(i); setShowNav(false); };
+  const toggleBookmark = () => setBookmarked(b => { const n = new Set(b); n.has(q.id) ? n.delete(q.id) : n.add(q.id); return n; });
+
+  const encouragement =
+    progressPct >= 100 ? "Last one — you've got this!" :
+    progressPct >= 75  ? "Almost there. Keep going." :
+    progressPct >= 50  ? "Halfway done. Great pace." :
+    progressPct >= 25  ? "Good start. Stay focused." : null;
+
+  return (
+    <div style={{ minHeight:'100dvh', background:'#0F172A', fontFamily:"'Inter',sans-serif", display:'flex', flexDirection:'column' }}>
+
+      {/* ── STICKY HEADER ── */}
+      <div style={{ position:'sticky', top:0, zIndex:30, background:'#1E293B', padding:'10px 14px 8px', flexShrink:0, boxShadow:'0 2px 8px rgba(0,0,0,0.2)' }}>
+        <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+          <button onClick={() => onFinish({ questions, answers, score:0, total:questions.length, cancelled:true })}
+            style={{ background:'none', border:'none', color:'rgba(255,255,255,0.8)', fontSize:18, padding:4, cursor:'pointer', flexShrink:0 }}>←</button>
+          <div style={{ flex:1, minWidth:0, textAlign:'center' }}>
+            <div style={{ color:'#fff', fontWeight:800, fontSize:14, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{config.subject}</div>
+            <div style={{ color:'rgba(255,255,255,0.55)', fontSize:10.5 }}>{config.examType} · {config.mode.toUpperCase()}</div>
+          </div>
+          <button onClick={() => setShowNav(true)} style={{
+            display:'flex', alignItems:'center', gap:4, background:'rgba(255,255,255,0.1)', border:'none',
+            borderRadius:20, padding:'6px 12px', color:'#fff', fontWeight:700, fontSize:12.5, cursor:'pointer', flexShrink:0,
+          }}>
+            {current+1}/{questions.length} <span style={{ fontSize:9 }}>▾</span>
+          </button>
+        </div>
+
+        {/* Progress bar */}
+        <div style={{ height:4, background:'rgba(255,255,255,0.12)', borderRadius:2, marginTop:10, overflow:'hidden' }}>
+          <div style={{ height:'100%', width:`${progressPct}%`, background:'linear-gradient(90deg,#3B82F6,#60A5FA)', borderRadius:2, transition:'width 0.25s ease' }}/>
+        </div>
+        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginTop:5 }}>
+          <span style={{ color:'rgba(255,255,255,0.5)', fontSize:10.5 }}>Question {current+1} of {questions.length} · {progressPct}%</span>
+          <span style={{ fontFamily:'monospace', fontSize:12.5, fontWeight:700, color: isCritical?'#FCA5A5':isWarning?'#FCD34D':'rgba(255,255,255,0.85)' }}>
+            ⏱ {config.mode==='study' ? '∞' : formatTime(timeLeft)}
+          </span>
+        </div>
+      </div>
+
+      {/* ── STUDY TOOLS STRIP ── */}
+      <div style={{ display:'flex', alignItems:'center', gap:8, padding:'8px 14px', background:'#1E293B', borderTop:'1px solid rgba(255,255,255,0.06)', flexShrink:0, overflowX:'auto' }}>
+        <button onClick={() => setShowCalc(c=>!c)} style={toolChipStyle}>🧮 Calculator</button>
+        <button onClick={toggleBookmark} style={{ ...toolChipStyle, background: isBookmarked ? 'rgba(217,119,6,0.25)' : toolChipStyle.background, color: isBookmarked ? '#FCD34D' : toolChipStyle.color }}>
+          {isBookmarked ? '🔖 Saved' : '🔖 Bookmark'}
+        </button>
+        <button onClick={() => setRevealed(r=>({...r,[q.id]:true}))} style={toolChipStyle}>💡 Explanation</button>
+        <button onClick={() => setShowTools(true)} style={toolChipStyle}>⋮ More</button>
+        <div style={{ flex:1 }}/>
+      </div>
+
+      {/* ── QUESTION CONTENT (scrollable) ── */}
+      <div style={{ flex:1, overflowY:'auto', padding:'16px 16px 100px' }}>
+        {encouragement && (
+          <div style={{ textAlign:'center', color:'rgba(255,255,255,0.4)', fontSize:11.5, marginBottom:12, fontStyle:'italic' }}>{encouragement}</div>
+        )}
+
+        <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:12, flexWrap:'wrap' }}>
+          <span style={{ fontSize:11.5, fontWeight:700, color:'#93C5FD', background:'rgba(59,130,246,0.15)', padding:'3px 11px', borderRadius:20 }}>Question {current+1}</span>
+          {isBookmarked && <span style={{ fontSize:11, fontWeight:700, color:'#FCD34D', background:'rgba(217,119,6,0.18)', padding:'3px 10px', borderRadius:20 }}>🔖 Bookmarked</span>}
+          {config.mode === 'adaptive' && (
+            <span style={{ fontSize:11, fontWeight:700, padding:'3px 10px', borderRadius:20, background:'rgba(255,255,255,0.08)', color: adaptiveDifficulty==='hard'?'#FCA5A5':adaptiveDifficulty==='easy'?'#86EFAC':'#93C5FD' }}>
+              🎯 {adaptiveDifficulty}
+            </span>
+          )}
+          {(!isOnline || usingOfflineCache) && (
+            <span style={{ fontSize:11, fontWeight:700, color:'#FCD34D', background:'rgba(217,119,6,0.15)', padding:'3px 10px', borderRadius:20 }}>📡 {!isOnline?'Offline':'Saved set'}</span>
+          )}
+        </div>
+
+        {/* Question card */}
+        <div style={{ background:'#1E293B', border:'1px solid rgba(255,255,255,0.08)', borderRadius:16, padding:'18px 18px', marginBottom:16, fontSize:17, lineHeight:1.65, color:'#F1F5F9', fontWeight:500 }}>
+          {q.question_text}
+          {q.media_url && !lowData && (
+            <img src={q.media_url} alt="Question diagram" style={{ display:'block', maxWidth:'100%', maxHeight:280, marginTop:14, borderRadius:10, border:'1px solid rgba(255,255,255,0.1)' }} />
+          )}
+          {q.media_url && lowData && (
+            <div style={{ marginTop:14, padding:'10px 14px', background:'rgba(255,255,255,0.05)', borderRadius:10, border:'1px dashed rgba(255,255,255,0.15)', fontSize:12.5, color:'rgba(255,255,255,0.5)' }}>
+              🖼️ Diagram hidden — Low Data mode is on
+            </div>
+          )}
+        </div>
+
+        {/* Options — full-width touch cards */}
+        <div style={{ display:'flex', flexDirection:'column', gap:11, marginBottom:18 }}>
+          {opts.map((opt, i) => {
+            const isSelected = selected === opt;
+            const isCorrect = correctAnswers.includes(opt.toLowerCase().trim());
+            let bg='rgba(255,255,255,0.04)', border='rgba(255,255,255,0.12)', textColor='#E2E8F0', badgeColor='rgba(255,255,255,0.5)';
+            if (isRevealed) {
+              if (isCorrect)        { bg='rgba(22,163,74,0.15)'; border='#16A34A'; textColor='#86EFAC'; badgeColor='#16A34A'; }
+              else if (isSelected)  { bg='rgba(220,38,38,0.15)'; border='#EF4444'; textColor='#FCA5A5'; badgeColor='#EF4444'; }
+            } else if (isSelected)  { bg='rgba(37,99,235,0.18)'; border='#3B82F6'; textColor='#BFDBFE'; badgeColor='#3B82F6'; }
+
+            return (
+              <button
+                key={i}
+                onClick={() => !submittedRef.current && selectAnswer(q.id, opt)}
+                style={{
+                  display:'flex', alignItems:'center', gap:14, padding:'16px 16px', minHeight:56,
+                  background:bg, border:`1.5px solid ${border}`, borderRadius:14,
+                  cursor: submittedRef.current ? 'default' : 'pointer', textAlign:'left', width:'100%',
+                  transition:'background 0.12s, border-color 0.12s', fontFamily:"'Inter',sans-serif",
+                  WebkitTapHighlightColor:'transparent',
+                }}
+              >
+                <span style={{
+                  width:30, height:30, borderRadius:9, border:`1.5px solid ${badgeColor}`, background: isSelected||(isRevealed&&isCorrect) ? badgeColor : 'transparent',
+                  display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0,
+                  fontSize:13, fontWeight:800, color: isSelected||(isRevealed&&isCorrect) ? '#fff' : badgeColor,
+                }}>{LETTERS[i]}</span>
+                <span style={{ fontSize:15, fontWeight: isSelected?600:400, color:textColor, lineHeight:1.5, flex:1 }}>{opt}</span>
+                {isRevealed && isCorrect && <span style={{ fontSize:18, flexShrink:0 }}>✓</span>}
+                {isRevealed && isSelected && !isCorrect && <span style={{ fontSize:18, flexShrink:0 }}>✗</span>}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Explanation */}
+        {isRevealed && q.explanation && (
+          <div style={{ background:'rgba(37,99,235,0.1)', border:'1px solid rgba(59,130,246,0.3)', borderRadius:12, padding:'14px 16px', marginBottom:16, fontSize:13.5, color:'#BFDBFE', lineHeight:1.7 }}>
+            <div style={{ fontWeight:700, marginBottom:6, color:'#93C5FD' }}>💡 Explanation</div>
+            {q.explanation}
+          </div>
+        )}
+      </div>
+
+      {/* ── STICKY BOTTOM ACTION BAR ── */}
+      <div style={{ position:'sticky', bottom:0, background:'#1E293B', borderTop:'1px solid rgba(255,255,255,0.08)', padding:'10px 14px', display:'flex', alignItems:'center', gap:8, flexShrink:0, paddingBottom:'calc(10px + env(safe-area-inset-bottom))' }}>
+        <button onClick={toggleBookmark} style={{
+          width:44, height:44, borderRadius:12, flexShrink:0, border:'1.5px solid rgba(255,255,255,0.15)',
+          background: isBookmarked ? 'rgba(217,119,6,0.2)' : 'rgba(255,255,255,0.05)', fontSize:18, cursor:'pointer',
+        }}>🔖</button>
+        <button onClick={() => setCurrent(c=>Math.max(0,c-1))} disabled={current===0} style={{
+          flex:1, padding:'13px 0', borderRadius:12, border:'1.5px solid rgba(255,255,255,0.15)',
+          background:'transparent', color: current===0?'rgba(255,255,255,0.25)':'rgba(255,255,255,0.85)',
+          fontWeight:700, fontSize:14, cursor: current===0?'default':'pointer', fontFamily:"'Inter',sans-serif",
+        }}>← Prev</button>
+        {isLast ? (
+          <button onClick={() => setShowSubmitConfirm(true)} style={{
+            flex:1.4, padding:'13px 0', borderRadius:12, border:'none', background:'#DC2626',
+            color:'#fff', fontWeight:800, fontSize:14, cursor:'pointer', fontFamily:"'Inter',sans-serif",
+          }}>Submit Exam</button>
+        ) : (
+          <button onClick={() => setCurrent(c=>Math.min(questions.length-1,c+1))} style={{
+            flex:1.4, padding:'13px 0', borderRadius:12, border:'none', background:'#2563EB',
+            color:'#fff', fontWeight:800, fontSize:14, cursor:'pointer', fontFamily:"'Inter',sans-serif",
+          }}>Next →</button>
+        )}
+      </div>
+
+      {/* ── QUESTION NAVIGATOR BOTTOM SHEET ── */}
+      {showNav && (
+        <div style={{ position:'fixed', inset:0, zIndex:50, display:'flex', alignItems:'flex-end' }}>
+          <div onClick={() => setShowNav(false)} style={{ position:'absolute', inset:0, background:'rgba(0,0,0,0.55)' }}/>
+          <div style={{ position:'relative', width:'100%', maxHeight:'75vh', background:'#1E293B', borderRadius:'20px 20px 0 0', padding:'14px 18px calc(18px + env(safe-area-inset-bottom))', display:'flex', flexDirection:'column' }}>
+            <div style={{ width:36, height:4, background:'rgba(255,255,255,0.2)', borderRadius:2, margin:'0 auto 14px' }}/>
+            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:12 }}>
+              <span style={{ color:'#fff', fontWeight:800, fontSize:15 }}>Questions</span>
+              <button onClick={() => setShowNav(false)} style={{ background:'none', border:'none', color:'rgba(255,255,255,0.6)', fontSize:20, cursor:'pointer' }}>✕</button>
+            </div>
+
+            <div style={{ overflowY:'auto', flex:1 }}>
+              <div style={{ display:'grid', gridTemplateColumns:'repeat(6,1fr)', gap:8, marginBottom:16 }}>
+                {questions.map((_,i) => {
+                  const st = paletteStatus(i);
+                  const pc = palColors[st];
+                  return (
+                    <button key={i} onClick={() => goTo(i)} style={{
+                      aspectRatio:'1', borderRadius:10, border:`1.5px solid ${pc.border}`,
+                      background:pc.bg, color:pc.color, fontWeight:700, fontSize:13,
+                      cursor:'pointer', fontFamily:"'Inter',sans-serif",
+                    }}>{i+1}</button>
+                  );
+                })}
+              </div>
+
+              <div style={{ display:'flex', flexWrap:'wrap', gap:12, marginBottom:14 }}>
+                {[['#16A34A','Answered'],['#2563EB','Current'],['#D97706','Bookmarked'],['#94A3B8','Not Done']].map(([c,l])=>(
+                  <div key={l} style={{ display:'flex', alignItems:'center', gap:6, fontSize:11, color:'rgba(255,255,255,0.6)' }}>
+                    <div style={{ width:10, height:10, borderRadius:3, background:c }}/>{l}
+                  </div>
+                ))}
+              </div>
+
+              <div style={{ textAlign:'center', fontSize:12.5, color:'rgba(255,255,255,0.6)', marginBottom:14 }}>
+                Answered: <strong style={{ color:'#86EFAC' }}>{answeredCount}</strong> · Remaining: <strong style={{ color:'#FCA5A5' }}>{remainingCount}</strong> · Bookmarked: <strong style={{ color:'#FCD34D' }}>{bookmarkedCount}</strong>
+              </div>
+
+              <button onClick={() => { setShowNav(false); setShowSubmitConfirm(true); }} style={{
+                width:'100%', padding:'12px 0', borderRadius:12, border:'1.5px solid #DC2626', background:'transparent',
+                color:'#FCA5A5', fontWeight:700, fontSize:13.5, cursor:'pointer', fontFamily:"'Inter',sans-serif",
+              }}>Submit Exam Now</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── STUDY TOOLS BOTTOM SHEET (secondary/less-used) ── */}
+      {showTools && (
+        <div style={{ position:'fixed', inset:0, zIndex:50, display:'flex', alignItems:'flex-end' }}>
+          <div onClick={() => setShowTools(false)} style={{ position:'absolute', inset:0, background:'rgba(0,0,0,0.55)' }}/>
+          <div style={{ position:'relative', width:'100%', background:'#1E293B', borderRadius:'20px 20px 0 0', padding:'14px 18px calc(18px + env(safe-area-inset-bottom))' }}>
+            <div style={{ width:36, height:4, background:'rgba(255,255,255,0.2)', borderRadius:2, margin:'0 auto 14px' }}/>
+            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:14 }}>
+              <span style={{ color:'#fff', fontWeight:800, fontSize:15 }}>More Tools</span>
+              <button onClick={() => setShowTools(false)} style={{ background:'none', border:'none', color:'rgba(255,255,255,0.6)', fontSize:20, cursor:'pointer' }}>✕</button>
+            </div>
+            <button onClick={toggleLowData} style={{
+              width:'100%', display:'flex', alignItems:'center', justifyContent:'space-between', padding:'14px 16px',
+              borderRadius:12, border:'1px solid rgba(255,255,255,0.1)', background:'rgba(255,255,255,0.04)',
+              color:'#E2E8F0', fontWeight:600, fontSize:14, cursor:'pointer', marginBottom:10, fontFamily:"'Inter',sans-serif",
+            }}>
+              <span>{lowData ? '🐢 Low Data Mode' : '📶 Full Data Mode'}</span>
+              <span style={{ fontSize:12, color:'rgba(255,255,255,0.5)' }}>{lowData ? 'Diagrams hidden' : 'Tap to save data'}</span>
+            </button>
+            <div style={{ fontSize:12, color:'rgba(255,255,255,0.45)', textAlign:'center', marginTop:4 }}>
+              Attempt {attempts}/{config.count} · {config.year !== 'All Years' ? `${config.year} · ` : ''}{config.mode.toUpperCase()}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── SUBMIT CONFIRMATION ── */}
+      {showSubmitConfirm && (
+        <div style={{ position:'fixed', inset:0, zIndex:60, display:'flex', alignItems:'center', justifyContent:'center', padding:20 }}>
+          <div onClick={() => setShowSubmitConfirm(false)} style={{ position:'absolute', inset:0, background:'rgba(0,0,0,0.65)' }}/>
+          <div style={{ position:'relative', width:'100%', maxWidth:340, background:'#1E293B', borderRadius:18, padding:24, textAlign:'center' }}>
+            <div style={{ fontSize:17, fontWeight:800, color:'#fff', marginBottom:10 }}>Submit your exam?</div>
+            <div style={{ fontSize:13.5, color:'rgba(255,255,255,0.7)', lineHeight:1.6, marginBottom:18 }}>
+              You have answered <strong style={{ color:'#86EFAC' }}>{answeredCount}</strong> of {questions.length} questions.
+              {remainingCount > 0 && <><br /><strong style={{ color:'#FCA5A5' }}>{remainingCount}</strong> question{remainingCount!==1?'s are':' is'} still unanswered.</>}
+            </div>
+            <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
+              <button onClick={() => setShowSubmitConfirm(false)} style={{
+                padding:'12px 0', borderRadius:12, border:'1.5px solid rgba(255,255,255,0.15)', background:'transparent',
+                color:'#E2E8F0', fontWeight:700, fontSize:14, cursor:'pointer', fontFamily:"'Inter',sans-serif",
+              }}>Continue Reviewing</button>
+              <button onClick={() => { setShowSubmitConfirm(false); handleSubmit(false); }} style={{
+                padding:'12px 0', borderRadius:12, border:'none', background:'#DC2626',
+                color:'#fff', fontWeight:800, fontSize:14, cursor:'pointer', fontFamily:"'Inter',sans-serif",
+              }}>Submit Exam</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showCalc && <SimpleCalc onClose={() => setShowCalc(false)} />}
+      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+    </div>
+  );
+}
+
+const toolChipStyle = {
+  display:'flex', alignItems:'center', gap:5, padding:'7px 13px', borderRadius:20,
+  border:'1px solid rgba(255,255,255,0.1)', background:'rgba(255,255,255,0.05)',
+  color:'rgba(255,255,255,0.8)', fontSize:12, fontWeight:600, cursor:'pointer',
+  whiteSpace:'nowrap', flexShrink:0, fontFamily:"'Inter',sans-serif",
+};
 
 // ── RESULTS ───────────────────────────────────────────────────
 function ResultsScreen({ result, config, onRetry, onNew }) {
@@ -781,7 +1099,7 @@ function ResultsScreen({ result, config, onRetry, onNew }) {
                     <span style={{ fontSize:11, fontWeight:700, padding:'2px 10px', borderRadius:20, background:isOk?'#DCFCE7':userAns?'#FEE2E2':'#F1F5F9', color:isOk?'#16A34A':userAns?'#DC2626':'#64748B' }}>{isOk?'✓ Correct':userAns?'✗ Wrong':'— Skipped'}</span>
                     <span style={{ fontSize:11, color:'#94A3B8' }}>Q{i+1}</span>
                   </div>
-                  <div style={{ fontSize:14, fontWeight:600, color:'#1E293B', marginBottom:10, lineHeight:1.6 }}><MathText text={q.question_text} /></div>
+                  <div style={{ fontSize:14, fontWeight:600, color:'#1E293B', marginBottom:10, lineHeight:1.6 }}>{q.question_text}</div>
                   <div style={{ display:'flex', flexDirection:'column', gap:5 }}>
                     {opts.map((opt,oi)=>{
                       const isCrt = correct.includes(opt.toLowerCase().trim());
@@ -789,7 +1107,7 @@ function ResultsScreen({ result, config, onRetry, onNew }) {
                       return (
                         <div key={oi} style={{ display:'flex', alignItems:'center', gap:8, padding:'7px 12px', borderRadius:8, fontSize:13, background:isCrt?'#F0FDF4':isUsr&&!isCrt?'#FEF2F2':'transparent' }}>
                           <span style={{ fontWeight:800, fontSize:11, color:'#94A3B8', minWidth:14 }}>{LETTERS[oi]}</span>
-                          <span style={{ color:isCrt?'#16A34A':isUsr&&!isCrt?'#DC2626':'#374151' }}><MathText text={opt} /></span>
+                          <span style={{ color:isCrt?'#16A34A':isUsr&&!isCrt?'#DC2626':'#374151' }}>{opt}</span>
                           {isCrt&&<span style={{ marginLeft:'auto' }}>✓</span>}
                           {isUsr&&!isCrt&&<span style={{ marginLeft:'auto' }}>✗</span>}
                         </div>
@@ -798,7 +1116,7 @@ function ResultsScreen({ result, config, onRetry, onNew }) {
                   </div>
                   {q.explanation&&(
                     <div style={{ marginTop:10, padding:'10px 14px', background:'#EFF6FF', borderRadius:8, fontSize:12, color:'#1E40AF', lineHeight:1.7 }}>
-                      <b>💡 Explanation:</b> <MathText text={q.explanation} />
+                      <b>💡 Explanation:</b> {q.explanation}
                     </div>
                   )}
                 </div>
