@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { importBatchAPI, syllabusAPI } from '../../utils/api';
 import MathText from '../../components/MathText';
+import QuestionCard from '../../components/QuestionCard';
 
 const STATUS_META = {
   verified:        { label: 'Verified',        bg: 'var(--success-dim)', fg: 'var(--success)' },
@@ -34,6 +35,7 @@ export default function ImportBatchReviewPage() {
   const [filter, setFilter] = useState(null); // null = all
   const [loading, setLoading] = useState(true);
   const [editingId, setEditingId] = useState(null);
+  const [previewRow, setPreviewRow] = useState(null); // staged row currently shown in the Preview modal — section 12's "see exactly what the student will see"
   const [draft, setDraft] = useState({});
   const [publishing, setPublishing] = useState(false);
 
@@ -398,6 +400,7 @@ export default function ImportBatchReviewPage() {
                     <button onClick={() => openTopicPicker(row.id)} style={{ ...btnS(false), color: row.topic_id ? 'var(--success)' : 'var(--text-secondary)' }}>
                       {row.topic_id ? '✓ Topic' : '+ Topic'}
                     </button>
+                    <button onClick={() => setPreviewRow(row)} style={{ ...btnS(false), color: 'var(--brand-light)' }}>👁 Preview</button>
                     <button onClick={() => startEdit(row)} style={btnS(false)}>Edit</button>
                     <button onClick={() => reject(row.id)} style={{ ...btnS(false), color: 'var(--danger)' }}>Reject</button>
                   </div>
@@ -559,6 +562,36 @@ export default function ImportBatchReviewPage() {
           );
         })}
       </div>
+
+      {/* Preview modal — exactly what a student will see, using the same
+          QuestionCard component the live app uses (section 12) */}
+      {previewRow && (
+        <div
+          onClick={() => setPreviewRow(null)}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: 20 }}
+        >
+          <div onClick={e => e.stopPropagation()} style={{ maxHeight: '90vh', overflowY: 'auto', position: 'relative' }}>
+            <button
+              onClick={() => setPreviewRow(null)}
+              style={{ position: 'absolute', top: -14, right: -14, width: 32, height: 32, borderRadius: '50%', border: 'none', background: '#fff', color: '#0F172A', fontWeight: 800, cursor: 'pointer', boxShadow: '0 2px 8px rgba(0,0,0,0.3)', zIndex: 1 }}
+            >
+              ✕
+            </button>
+            <QuestionCard
+              subject={batch.subject_name || ''}
+              examBody={batch.exam_body || ''}
+              mode="PREVIEW"
+              index={previewRow.question_number || 1}
+              total={null}
+              question={previewRow}
+              selected={null}
+              onSelect={() => {}}
+              revealed={true}
+              disabled={true}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

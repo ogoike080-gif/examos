@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { syllabusAPI, textbookAPI, questionAPI } from '../../utils/api';
 import MathText from '../../components/MathText';
+import QuestionCard from '../../components/QuestionCard';
 
 const sectionS = { marginBottom: 18 };
 const sectionTitleS = { fontSize: 13, fontWeight: 800, color: 'var(--brand-light)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.04em' };
@@ -180,41 +181,22 @@ export default function TopicLearningPage() {
             </div>
           ) : (() => {
             const q = practiceQuestions[practiceIndex];
-            const options = parseOptions(q.options);
-            const correct = parseAnswers(q.correct_answers);
             return (
               <div>
-                <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 10 }}>Question {practiceIndex + 1} of {practiceQuestions.length}</p>
-                <p style={{ fontSize: 15, fontWeight: 600, marginBottom: 14 }}><MathText text={q.question_text} /></p>
-                {q.diagram_svg ? (
-                  <div style={{ marginBottom: 14, maxWidth: '100%' }} dangerouslySetInnerHTML={{ __html: q.diagram_svg }} />
-                ) : q.media_url && (
-                  <img src={q.media_url} alt="Question diagram" style={{ display: 'block', maxWidth: '100%', maxHeight: 300, marginBottom: 14, borderRadius: 'var(--r-lg)', border: '1px solid var(--border)' }} />
-                )}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 14 }}>
-                  {options.map((opt, i) => {
-                    const isCorrect = correct.includes(opt);
-                    const isSelected = practiceSelected === opt;
-                    let bg = 'var(--bg-raised)', border = 'var(--border)', color = 'var(--text-primary)';
-                    if (practiceSelected !== null) {
-                      if (isCorrect) { bg = 'var(--success-dim)'; border = 'var(--success)'; color = 'var(--success)'; }
-                      else if (isSelected) { bg = 'var(--danger-dim)'; border = 'var(--danger)'; color = 'var(--danger)'; }
-                    }
-                    return (
-                      <button key={i} onClick={() => selectPracticeAnswer(opt)} disabled={practiceSelected !== null}
-                        style={{ textAlign: 'left', padding: '12px 14px', borderRadius: 'var(--r-lg)', border: `1.5px solid ${border}`, background: bg, color, cursor: practiceSelected === null ? 'pointer' : 'default', fontSize: 14 }}>
-                        {String.fromCharCode(65 + i)}. <MathText text={opt} inline />
-                      </button>
-                    );
-                  })}
-                </div>
-                {practiceSelected !== null && q.explanation && (
-                  <p style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 14, padding: 12, background: 'var(--bg-raised)', borderRadius: 'var(--r)' }}>
-                    <MathText text={q.explanation} />
-                  </p>
-                )}
+                <QuestionCard
+                  subject={topic?.subject_name || ''}
+                  examBody={topic?.exam_body_name || ''}
+                  mode="TOPIC PRACTICE"
+                  index={practiceIndex + 1}
+                  total={practiceQuestions.length}
+                  question={q}
+                  selected={practiceSelected}
+                  onSelect={selectPracticeAnswer}
+                  revealed={practiceSelected !== null}
+                  disabled={practiceSelected !== null}
+                />
                 {practiceSelected !== null && (
-                  <button onClick={nextPracticeQuestion} style={{ ...actionBtnS(false), width: 'auto', padding: '10px 18px' }}>
+                  <button onClick={nextPracticeQuestion} style={{ ...actionBtnS(false), width: 'auto', padding: '10px 18px', marginTop: 14 }}>
                     {practiceIndex + 1 >= practiceQuestions.length ? 'See Results' : 'Next Question →'}
                   </button>
                 )}
