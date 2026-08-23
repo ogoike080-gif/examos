@@ -10,7 +10,31 @@ const VISION_MODEL = 'gemini-3.5-flash';
 
 function extractJSON(text) {
   const clean = text.trim().replace(/```json|```/g, '').trim();
-  return JSON.parse(clean);
+  try {
+    return JSON.parse(clean);
+  } catch (err) {
+    // The most common failure here isn't a genuinely malformed response — it's
+    // the vision/generation prompts (see extractQuestionsFromImage, explainAnswer)
+    // deliberately asking the model to write LaTeX like \frac{1}{2} or 30^\circ
+    // into JSON string values. For that to be valid JSON the model must double
+    // the backslash (\\frac), and it frequently doesn't, especially on
+    // math-dense exam pages — producing exactly this kind of SyntaxError
+    // ("Bad escaped character in JSON at position N"). Double any backslash
+    // that isn't already forming an UNAMBIGUOUS JSON escape and retry once.
+    //
+    // Deliberately narrower than JSON's full escape set: \b \f \n \r \t are
+    // technically valid JSON escapes, but in this LaTeX-heavy context they are
+    // overwhelmingly more likely to be the first letter of a LaTeX macro
+    // (\beta, \frac, \neq, \r..., \theta/\times/\tan) than a real control
+    // character — leaving them alone silently corrupts math into invisible
+    // control characters instead of throwing, which is worse than a slightly
+    // over-eager repair. Only \" \\ \/ and a genuine \uXXXX are left as-is;
+    // everything else (including b/f/n/r/t) gets escaped. Worst case for a
+    // rare genuine \n is a literal "\n" surviving as visible text instead of
+    // a real line break — a cosmetic downgrade, not corruption.
+    const repaired = clean.replace(/\\(?!["\\/]|u[0-9a-fA-F]{4})/g, '\\\\');
+    return JSON.parse(repaired);
+  }
 }
 
 /**
