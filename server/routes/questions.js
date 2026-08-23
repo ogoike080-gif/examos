@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 const { getDB } = require('../models/db');
-const { authenticate, authorize } = require('../middleware/auth');
+const { authenticate, optionalAuthenticate, authorize } = require('../middleware/auth');
 const { generateQuestionsWithAI, extractQuestionsFromImage, explainAnswer } = require('../ai/questionGenerator');
 const { cleanMathNotation, cleanQuestionFields } = require('../utils/mathNotation');
 const { FREE_QUESTION_LIMIT, hasActivePaidPlan, getRemainingQuota, consumeQuota } = require('../services/freeTrial');
@@ -140,7 +140,7 @@ router.post('/ai-generate', authenticate, authorize('superadmin', 'admin', 'exam
 });
 
 // GET /api/questions  ← list all questions
-router.get('/', authenticate, async (req, res) => {
+router.get('/', optionalAuthenticate, async (req, res) => {
   try {
     const db = getDB();
     const {
@@ -152,26 +152,43 @@ router.get('/', authenticate, async (req, res) => {
     const pageNum = Math.max(1, Number(page) || 1);
     const offsetNum = (pageNum - 1) * limitNum;
 
-    // Free-trial gate: a candidate who hasn't subscribed gets 10 free
-    // questions total, then gets asked to upgrade. Paid users and staff
-    // roles (admin/examiner/etc.) never hit this. If quota is already
-    // exhausted, don't even touch the questions table — just tell the
-    // client to show the upgrade prompt.
+    // Free-trial gate: 5 free questions before being asked to subscribe.
+    // Two cases share the same quota logic (see services/freeTrial.js):
+    //  - A logged-in candidate without a paid plan, keyed by their user id.
+    //  - A completely anonymous visitor hitting "Practice Free" from the
+    //    landing page with no account at all — this route used to require
+    //    `authenticate`, which meant an anonymous visitor got a 401 on their
+    //    very first question and was bounced straight to /login before ever
+    //    seeing a question. Now it's optionalAuthenticate, and an anonymous
+    //    request is tracked by a client-generated x-anon-id header instead
+    //    of a user id (see utils/anonId.js on the client) — same table, same
+    //    5-question limit, just a different kind of key. Staff roles
+    //    (admin/examiner/etc.) never hit this either way.
     let effectiveLimit = limitNum;
     let freeTrial = null;
-    if (req.user.role === 'candidate') {
-      const isPaid = await hasActivePaidPlan(db, req.user.id);
-      if (!isPaid) {
-        const remaining = await getRemainingQuota(db, req.user.id);
-        if (remaining <= 0) {
-          return res.status(402).json({
-            error: 'You\'ve used all 10 free questions. Subscribe to a plan to keep practicing.',
-            code: 'FREE_LIMIT_REACHED',
-            free_limit: FREE_QUESTION_LIMIT,
-          });
+    const isAnonymous = !req.user;
+    const anonId = req.headers['x-anon-id'];
+    if (isAnonymous || req.user.role === 'candidate') {
+      const quotaKey = isAnonymous ? (anonId ? `anon:${anonId}` : null) : req.user.id;
+      // No anon id sent at all — can't track this visitor's quota, so rather
+      // than either trusting them unlimited or blocking outright, fall back
+      // to serving normally-limited results with no free-trial bookkeeping.
+      // In practice the client always sends this (see main.jsx), so this is
+      // just a safety fallback, not the expected path.
+      if (quotaKey) {
+        const isPaid = isAnonymous ? false : await hasActivePaidPlan(db, req.user.id);
+        if (!isPaid) {
+          const remaining = await getRemainingQuota(db, quotaKey);
+          if (remaining <= 0) {
+            return res.status(402).json({
+              error: `You've used all ${FREE_QUESTION_LIMIT} free questions. Subscribe to a plan to keep practicing.`,
+              code: 'FREE_LIMIT_REACHED',
+              free_limit: FREE_QUESTION_LIMIT,
+            });
+          }
+          effectiveLimit = Math.min(limitNum, remaining);
+          freeTrial = { remaining_before: remaining, limit: FREE_QUESTION_LIMIT, quotaKey };
         }
-        effectiveLimit = Math.min(limitNum, remaining);
-        freeTrial = { remaining_before: remaining, limit: FREE_QUESTION_LIMIT };
       }
     }
 
@@ -223,7 +240,7 @@ router.get('/', authenticate, async (req, res) => {
       // Only consume quota for what was actually handed back — if fewer
       // questions matched the filters than the trial had left, no sense
       // burning unused quota on questions that were never served.
-      const consumed = await consumeQuota(db, req.user.id, questions.length);
+      const consumed = await consumeQuota(db, freeTrial.quotaKey, questions.length);
       freeTrialStatus = {
         limit: freeTrial.limit,
         remaining: Math.max(0, freeTrial.remaining_before - consumed),
@@ -378,7 +395,12 @@ router.delete('/:id', authenticate, authorize('superadmin', 'admin'), async (req
 // the DB with no further AI call. Any authenticated user can trigger this
 // (not admin-only) since it's routinely hit by candidates reviewing their
 // own answers, not just staff.
-router.post('/:id/generate-explanation', authenticate, async (req, res) => {
+// Optionally authenticated for the same reason as GET '/' above — an
+// anonymous "Practice Free" visitor needs explanations for their 5 free
+// questions too, and this endpoint doesn't do anything user-specific (it
+// only reads/writes the shared question row), so there's nothing here that
+// actually needs a real account.
+router.post('/:id/generate-explanation', optionalAuthenticate, async (req, res) => {
   try {
     const db = getDB();
     const [rows] = await db.execute(

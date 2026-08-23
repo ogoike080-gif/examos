@@ -317,15 +317,43 @@ function SetupScreen({ onStart }) {
 function FreeTrialPaywall({ onDismiss }) {
   const { user } = useAuthStore();
   const { pay } = usePaystack();
+  // Two very different visitors land here now that "Practice Free" doesn't
+  // require login first:
+  //  - An anonymous visitor with no account at all — needs a name AND email
+  //    before anything else, since there's nothing to attach a payment to
+  //    yet. Entering these here effectively *is* their signup — an account
+  //    gets created behind the scenes and they're logged in, matching what
+  //    was asked for: only ask them to "log in" (by giving their details)
+  //    after their free questions run out, not before.
+  //  - A logged-in candidate who signed in by name only (no real email on
+  //    file — see routes/candidates.js) — already has an account, just
+  //    needs an email for Paystack to send the receipt to.
+  const isAnonymous = !user;
   const needsEmail = !isRealEmail(user?.email);
+  const [name, setName] = useState('');
   const [email, setEmail] = useState(needsEmail ? '' : user?.email || '');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
   const handleSubscribe = async () => {
+    if (isAnonymous && !name.trim()) { setError('Enter your name first'); return; }
     if (!isRealEmail(email)) { setError('Enter a valid email — Paystack sends your receipt there'); return; }
     setLoading(true);
     try {
+      if (isAnonymous) {
+        // Create the account now, right as they're about to pay — a random
+        // password since they've never set one; they're logging in by
+        // name/reg-number normally anyway, this account mainly exists to
+        // hold the subscription and payment history.
+        const password = (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}${Math.random()}`).slice(0, 20);
+        const res = await axios.post(`${API}/auth/register`, {
+          email, password, full_name: name.trim(), role: 'candidate',
+        });
+        const { token, user: newUser } = res.data;
+        axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+        useAuthStore.setState({ user: newUser, token, isAuthenticated: true });
+      }
+
       await pay({
         email,
         amount: 500,
@@ -334,7 +362,7 @@ function FreeTrialPaywall({ onDismiss }) {
         onClose: () => setLoading(false),
       });
     } catch (err) {
-      setError(err.response?.data?.error || 'Payment failed — try again');
+      setError(err.response?.data?.error || 'Something went wrong — try again');
       setLoading(false);
     }
   };
@@ -356,9 +384,24 @@ function FreeTrialPaywall({ onDismiss }) {
           Subscribe to keep practicing with unlimited questions, unlimited exams, and full explanations.
         </p>
 
+        {isAnonymous && (
+          <div style={{ textAlign: 'left', marginBottom: 12 }}>
+            <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 6 }}>
+              Your Name
+            </label>
+            <input
+              type="text"
+              value={name}
+              onChange={e => { setName(e.target.value); setError(''); }}
+              placeholder="e.g. Chidinma Okonkwo"
+              style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--r)', border: '1.5px solid var(--border-md)', background: 'var(--bg-raised)', color: 'var(--text-primary)', fontSize: 14 }}
+            />
+          </div>
+        )}
+
         <div style={{ textAlign: 'left', marginBottom: 16 }}>
           <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 6 }}>
-            Email for your receipt
+            {isAnonymous ? 'Your Email' : 'Email for your receipt'}
           </label>
           <input
             type="email"
