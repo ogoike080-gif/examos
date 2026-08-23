@@ -2,8 +2,13 @@
   "name": "examos",
   "version": "1.0.0",
   "private": true,
-  "description": "Root marker only — real dependencies live in server/package.json and client/package.json. Build/start are driven by nixpacks.toml.",
+  "description": "Root marker \u2014 real dependencies live in server/package.json and client/package.json.",
   "engines": {
     "node": ">=20"
+  },
+  "scripts": {
+    "install": "cd client && npm install && cd ../server && npm install",
+    "build": "cd client && npm run build",
+    "start": "cd server && npm start"
   }
 }
