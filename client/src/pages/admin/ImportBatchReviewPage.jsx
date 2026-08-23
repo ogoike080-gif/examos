@@ -16,6 +16,7 @@ const STATUS_META = {
 
 const cardS = { background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 'var(--r-xl)', padding: '20px' };
 const inputS = { width: '100%', padding: '8px 10px', borderRadius: 'var(--r)', border: '1.5px solid var(--border-md)', background: 'var(--bg-raised)', color: 'var(--text-primary)', fontFamily: 'var(--font-body)', fontSize: 13 };
+const labelS = { fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 6, display: 'block' };
 const btnS = (active) => ({
   padding: '6px 14px', borderRadius: 'var(--r-lg)', border: `1.5px solid ${active ? 'var(--brand-light)' : 'var(--border)'}`,
   background: active ? 'color-mix(in srgb, var(--brand-light) 12%, transparent)' : 'var(--bg-raised)',
