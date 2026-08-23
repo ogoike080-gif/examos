@@ -10,31 +10,29 @@ const VISION_MODEL = 'gemini-3.5-flash';
 
 function extractJSON(text) {
   const clean = text.trim().replace(/```json|```/g, '').trim();
-  try {
-    return JSON.parse(clean);
-  } catch (err) {
-    // The most common failure here isn't a genuinely malformed response — it's
-    // the vision/generation prompts (see extractQuestionsFromImage, explainAnswer)
-    // deliberately asking the model to write LaTeX like \frac{1}{2} or 30^\circ
-    // into JSON string values. For that to be valid JSON the model must double
-    // the backslash (\\frac), and it frequently doesn't, especially on
-    // math-dense exam pages — producing exactly this kind of SyntaxError
-    // ("Bad escaped character in JSON at position N"). Double any backslash
-    // that isn't already forming an UNAMBIGUOUS JSON escape and retry once.
-    //
-    // Deliberately narrower than JSON's full escape set: \b \f \n \r \t are
-    // technically valid JSON escapes, but in this LaTeX-heavy context they are
-    // overwhelmingly more likely to be the first letter of a LaTeX macro
-    // (\beta, \frac, \neq, \r..., \theta/\times/\tan) than a real control
-    // character — leaving them alone silently corrupts math into invisible
-    // control characters instead of throwing, which is worse than a slightly
-    // over-eager repair. Only \" \\ \/ and a genuine \uXXXX are left as-is;
-    // everything else (including b/f/n/r/t) gets escaped. Worst case for a
-    // rare genuine \n is a literal "\n" surviving as visible text instead of
-    // a real line break — a cosmetic downgrade, not corruption.
-    const repaired = clean.replace(/\\(?!["\\/]|u[0-9a-fA-F]{4})/g, '\\\\');
-    return JSON.parse(repaired);
-  }
+  return JSON.parse(clean);
+}
+
+// Gemini's free-tier quota error comes back as a wall of nested JSON — that's
+// what was showing up verbatim in the admin's "Pages Needing Attention" list
+// instead of something readable. This recognizes that specific error shape
+// (RESOURCE_EXHAUSTED / HTTP 429) and turns it into one clear sentence, and
+// pulls out the retryDelay Gemini itself suggests, if present, so the admin
+// knows roughly how long to wait before hitting Retry Page again.
+function parseGeminiError(err) {
+  const raw = err?.message || String(err);
+  const isQuotaExceeded = raw.includes('RESOURCE_EXHAUSTED') || raw.includes('"code":429') || raw.includes('status: 429');
+  if (!isQuotaExceeded) return { isQuotaExceeded: false, message: raw };
+
+  let retryDelaySeconds = null;
+  const delayMatch = raw.match(/"retryDelay"\s*:\s*"(\d+)s"/);
+  if (delayMatch) retryDelaySeconds = parseInt(delayMatch[1], 10);
+
+  const message = retryDelaySeconds
+    ? `Gemini API free-tier daily quota exceeded. Try again in about ${retryDelaySeconds} seconds, or upgrade to a paid Gemini API plan for higher limits.`
+    : `Gemini API free-tier daily quota exceeded. Try again later, or upgrade to a paid Gemini API plan for higher limits.`;
+
+  return { isQuotaExceeded: true, retryDelaySeconds, message };
 }
 
 /**
@@ -279,21 +277,47 @@ Rules:
       ],
     });
   } catch (visionErr) {
+    const geminiErr = parseGeminiError(visionErr);
+    if (geminiErr.isQuotaExceeded) {
+      // Both models share the same account-level free-tier quota — falling
+      // back to the lite model here would just burn a second guaranteed-
+      // to-fail request against an already-exhausted quota (this is exactly
+      // what was happening: the raw RESOURCE_EXHAUSTED JSON showing up
+      // verbatim in the admin's "Pages Needing Attention" list was actually
+      // the *second* failure, from the fallback model, after the first one
+      // already failed for the same reason). Fail fast with one clean,
+      // actionable message instead.
+      const cleanErr = new Error(geminiErr.message);
+      cleanErr.isQuotaExceeded = true;
+      cleanErr.retryDelaySeconds = geminiErr.retryDelaySeconds;
+      throw cleanErr;
+    }
     // Rate-limited or the model name changed again (Google retires these fast) —
     // fall back to the lite model rather than failing the whole page read.
     console.error(`Vision model (${VISION_MODEL}) failed, falling back to ${MODEL}:`, visionErr.message);
-    response = await ai.models.generateContent({
-      model: MODEL,
-      contents: [
-        {
-          role: 'user',
-          parts: [
-            { inlineData: { mimeType: mediaType, data: imageBase64 } },
-            { text: prompt },
-          ],
-        },
-      ],
-    });
+    try {
+      response = await ai.models.generateContent({
+        model: MODEL,
+        contents: [
+          {
+            role: 'user',
+            parts: [
+              { inlineData: { mimeType: mediaType, data: imageBase64 } },
+              { text: prompt },
+            ],
+          },
+        ],
+      });
+    } catch (fallbackErr) {
+      const fallbackGeminiErr = parseGeminiError(fallbackErr);
+      if (fallbackGeminiErr.isQuotaExceeded) {
+        const cleanErr = new Error(fallbackGeminiErr.message);
+        cleanErr.isQuotaExceeded = true;
+        cleanErr.retryDelaySeconds = fallbackGeminiErr.retryDelaySeconds;
+        throw cleanErr;
+      }
+      throw fallbackErr;
+    }
   }
 
   const parsed = extractJSON(response.text);
@@ -520,19 +544,13 @@ async function explainAnswer({ question_text, options, correct_answers, subject,
   const isEssayLike = question_type === 'essay' || (!options?.length && correctList.length === 0);
 
   const prompt = isEssayLike
-    ? `You are an experienced ${subject || ''} exam tutor. A student just attempted this theory/essay question and wants a model answer to study from.
+    ? `You are an experienced ${subject || ''} exam tutor. A student just answered this essay/theory question and wants guidance on how a strong answer is built.
 
 Question: ${question_text}
 
-This question may have multiple lettered parts — e.g. (a), (b), (c) — possibly itself further broken into (i), (ii). Address EVERY part, in the same order and using the same labels the question uses.
+There is no single fixed correct answer to check against — instead, explain the reasoning and structure a strong answer would follow: the key points/steps a student should cover, and why each matters. Suitable for a West African secondary school student preparing for WAEC/JAMB/NECO. Keep it focused: a few sentences to a short paragraph, not an essay.
 
-For any part that requires calculation: show the actual worked steps (not just a description of the method) and state the final numeric/algebraic answer clearly at the end of that part — exactly as a student would need to write it out for full marks, not a summary of the approach.
-
-For any part that is genuinely open-ended/descriptive (no single correct answer, e.g. discuss, explain, describe): give a strong, well-structured model answer covering the key points an examiner would look for.
-
-Suitable for a West African secondary school student preparing for WAEC/JAMB/NECO. Be complete but not padded — cover every part fully, without unnecessary repetition.
-
-Write any mathematical content as LaTeX wrapped in single dollar signs, e.g. $x^2 + 3x - 4 = 0$, $\\frac{1}{2}$, $30^\\circ$ — this gets rendered with a real math typesetting engine, so don't convert it to Unicode or plain text yourself. Put each lettered part on its own line.
+Write any mathematical content as LaTeX wrapped in single dollar signs, e.g. $x^2 + 3x - 4 = 0$, $\\frac{1}{2}$, $30^\\circ$ — this gets rendered with a real math typesetting engine, so don't convert it to Unicode or plain text yourself.
 
 Respond in JSON only (no markdown, no backticks):
 {
@@ -702,4 +720,5 @@ module.exports = {
   chatWithStudyAssistant,
   reconstructDiagramSVG,
   qualityCheckDiagram,
+  parseGeminiError,
 };

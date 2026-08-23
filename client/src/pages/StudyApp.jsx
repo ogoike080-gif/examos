@@ -4,6 +4,7 @@ import axios from 'axios';
 import { readOfflineCache, writeOfflineCache } from '../utils/offlineCache';
 import MathText from '../components/MathText';
 import ExplanationBox from '../components/ExplanationBox';
+import { FreeTrialPaywall } from './PracticeMode';
 
 const API = '/api';
 const LETTERS = ['A','B','C','D','E'];
@@ -50,7 +51,7 @@ const YEARS = ['All Years', ...Array.from({ length: new Date().getFullYear() - 1
 // ── SETUP SCREEN ──────────────────────────────────────────────
 function SetupScreen({ onStart }) {
   const [searchParams] = useSearchParams();
-  const [examType,  setExamType]  = useState('JAMB');
+  const [examType,  setExamType]  = useState('WAEC');
   const [subject,   setSubject]   = useState(searchParams.get('subject') || 'Mathematics');
   const [year,      setYear]      = useState('All Years');
   const [count,     setCount]     = useState(60);
@@ -342,6 +343,13 @@ function ExamScreen({ config, onFinish }) {
   const [isOnline,   setIsOnline]   = useState(navigator.onLine);
   const [lowData,    setLowData]    = useState(() => localStorage.getItem('examos-lowdata') === '1');
   const [adaptiveDifficulty, setAdaptiveDifficulty] = useState('medium');
+  // Set from the questions fetch when this is a free-trial visitor (see
+  // routes/questions.js) — remaining===0 means this batch is the last of
+  // their 5 free questions. showPaywall auto-flips true once they've seen
+  // the answer to that last question (effect below), same trigger pattern
+  // as PracticeMode.jsx's own engine.
+  const [freeTrial,  setFreeTrial]  = useState(null);
+  const [showPaywall,setShowPaywall]= useState(false);
   const poolRef = useRef({ easy: [], medium: [], hard: [] });
   const adaptedChunksRef = useRef(new Set());
   const ADAPT_CHUNK = 5;
@@ -364,6 +372,19 @@ function ExamScreen({ config, onFinish }) {
   const cacheKey = `examos-offline-qset:${config.subject}:${config.examType}:${config.year}`;
 
   useEffect(() => { loadQuestions(); }, []);
+
+  // Same auto-popup pattern as PracticeMode.jsx's engine — once the free
+  // trial's last question has its answer revealed, give them a couple
+  // seconds to actually read it, then show the paywall right over the
+  // session instead of a redirect.
+  useEffect(() => {
+    if (!freeTrial || freeTrial.remaining > 0) return;
+    if (!questions.length) return;
+    const lastQ = questions[questions.length - 1];
+    if (current !== questions.length - 1 || !revealed[lastQ?.id]) return;
+    const t = setTimeout(() => setShowPaywall(true), 2500);
+    return () => clearTimeout(t);
+  }, [current, revealed, freeTrial, questions]);
 
   // Adaptive AI: every time the student crosses into a new 5-question chunk
   // for the first time, look at how they did in the chunk just completed and
@@ -469,6 +490,7 @@ function ExamScreen({ config, onFinish }) {
       else writeOfflineCache(cacheKey, qs); // silently save for next time we're offline
       if (config.shuffle) qs = qs.sort(() => Math.random() - 0.5);
       setQuestions(qs.slice(0, config.count));
+      if (res.data.free_trial) setFreeTrial(res.data.free_trial);
     } catch {
       // Network call failed even though navigator.onLine said true (flaky connection) — fall back to cache
       const cached = readOfflineCache(cacheKey);
@@ -535,16 +557,19 @@ function ExamScreen({ config, onFinish }) {
 
   if (isMobile) {
     return (
-      <MobileExamScreen
-        config={config} questions={questions} answers={answers} revealed={revealed}
-        bookmarked={bookmarked} current={current} setCurrent={setCurrent}
-        timeLeft={timeLeft} showCalc={showCalc} setShowCalc={setShowCalc}
-        attempts={attempts} isOnline={isOnline} usingOfflineCache={usingOfflineCache}
-        lowData={lowData} toggleLowData={toggleLowData} adaptiveDifficulty={adaptiveDifficulty}
-        selectAnswer={selectAnswer} handleSubmit={handleSubmit} setBookmarked={setBookmarked}
-        setRevealed={setRevealed} onFinish={onFinish} submittedRef={submittedRef}
-        paletteStatus={paletteStatus}
-      />
+      <>
+        <MobileExamScreen
+          config={config} questions={questions} answers={answers} revealed={revealed}
+          bookmarked={bookmarked} current={current} setCurrent={setCurrent}
+          timeLeft={timeLeft} showCalc={showCalc} setShowCalc={setShowCalc}
+          attempts={attempts} isOnline={isOnline} usingOfflineCache={usingOfflineCache}
+          lowData={lowData} toggleLowData={toggleLowData} adaptiveDifficulty={adaptiveDifficulty}
+          selectAnswer={selectAnswer} handleSubmit={handleSubmit} setBookmarked={setBookmarked}
+          setRevealed={setRevealed} onFinish={onFinish} submittedRef={submittedRef}
+          paletteStatus={paletteStatus}
+        />
+        {showPaywall && <FreeTrialPaywall onDismiss={() => setShowPaywall(false)} />}
+      </>
     );
   }
 
@@ -726,6 +751,7 @@ function ExamScreen({ config, onFinish }) {
       </div>
 
       {showCalc && <SimpleCalc onClose={() => setShowCalc(false)} />}
+      {showPaywall && <FreeTrialPaywall onDismiss={() => setShowPaywall(false)} />}
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
     </div>
   );

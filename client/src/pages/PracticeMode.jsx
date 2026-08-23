@@ -5,6 +5,8 @@ import { ThemeToggle } from '../components/ThemeProvider';
 import Calculator from './candidate/Calculator';
 import MathText from '../components/MathText';
 import ExplanationBox from '../components/ExplanationBox';
+import { usePaystack, isRealEmail } from './candidate/PaystackPayment';
+import { useAuthStore } from '../store';
 
 const API = '/api';
 const LETTERS = ['A','B','C','D','E'];
@@ -151,7 +153,13 @@ function SetupScreen({ onStart }) {
               <label style={labelS}>Paper Type</label>
               <select value={paperType} onChange={e => setPaperType(e.target.value)}
                 style={{ width:'100%', padding:'10px 12px', borderRadius:'var(--r)', border:'1.5px solid var(--border-md)', background:'var(--bg-raised)', color:'var(--text-primary)', fontFamily:'var(--font-body)', fontSize:14, cursor:'pointer' }}>
-                {PAPER_TYPES.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
+                {PAPER_TYPES.map(p => {
+                  // Exam mode and Speed Test are auto-graded and timed — theory/
+                  // essay questions have no single right/wrong answer to grade
+                  // against, so they're only offered in Practice mode.
+                  const disabled = mode !== 'practice' && (p.id === 'theory' || p.id === 'essay');
+                  return <option key={p.id} value={p.id} disabled={disabled}>{p.label}{disabled ? ' (Practice only)' : ''}</option>;
+                })}
               </select>
             </div>
           </div>
@@ -200,7 +208,15 @@ function SetupScreen({ onStart }) {
                   { id:'exam',     icon:'📝', label:'Exam',       desc:'Review answers at the end only' },
                   { id:'speed',    icon:'⚡', label:'Speed Test', desc:'Race against time, no review' },
                 ].map(m => (
-                  <button key={m.id} onClick={() => setMode(m.id)} style={{
+                  <button key={m.id} onClick={() => {
+                    setMode(m.id);
+                    // Exam/Speed are objective-only — if a theory/essay paper
+                    // was selected, fall back to "Any" rather than silently
+                    // fetching zero questions or a mode mismatch.
+                    if (m.id !== 'practice' && (paperType === 'theory' || paperType === 'essay')) {
+                      setPaperType('Any');
+                    }
+                  }} style={{
                     display:'flex', alignItems:'center', gap:12, padding:'10px 14px',
                     borderRadius:'var(--r-lg)', border:`1.5px solid ${mode===m.id ? 'var(--brand)' : 'var(--border)'}`,
                     background: mode===m.id ? 'var(--brand-dim)' : 'var(--bg-raised)',
@@ -291,6 +307,124 @@ function SetupScreen({ onStart }) {
 }
 
 // ── PRACTICE ENGINE ───────────────────────────────────────────
+// Shown automatically the moment a free-trial candidate finishes their 5th
+// (last free) question — not a redirect, an overlay right on top of where
+// they already are, since the whole point is to catch them at the exact
+// moment they'd want to keep going. Reuses the same Paystack flow and
+// placeholder-email handling as the full billing page (PaystackPayment.jsx)
+// so a candidate who logged in by name only (no real email on file) still
+// gets prompted for one here, inline, instead of hitting a Paystack error.
+export function FreeTrialPaywall({ onDismiss }) {
+  const { user } = useAuthStore();
+  const { pay } = usePaystack();
+  // Two very different visitors land here now that "Practice Free" doesn't
+  // require login first:
+  //  - An anonymous visitor with no account at all — needs a name AND email
+  //    before anything else, since there's nothing to attach a payment to
+  //    yet. Entering these here effectively *is* their signup — an account
+  //    gets created behind the scenes and they're logged in, matching what
+  //    was asked for: only ask them to "log in" (by giving their details)
+  //    after their free questions run out, not before.
+  //  - A logged-in candidate who signed in by name only (no real email on
+  //    file — see routes/candidates.js) — already has an account, just
+  //    needs an email for Paystack to send the receipt to.
+  const isAnonymous = !user;
+  const needsEmail = !isRealEmail(user?.email);
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState(needsEmail ? '' : user?.email || '');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  const handleSubscribe = async () => {
+    if (isAnonymous && !name.trim()) { setError('Enter your name first'); return; }
+    if (!isRealEmail(email)) { setError('Enter a valid email — Paystack sends your receipt there'); return; }
+    setLoading(true);
+    try {
+      if (isAnonymous) {
+        // Create the account now, right as they're about to pay — a random
+        // password since they've never set one; they're logging in by
+        // name/reg-number normally anyway, this account mainly exists to
+        // hold the subscription and payment history.
+        const password = (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}${Math.random()}`).slice(0, 20);
+        const res = await axios.post(`${API}/auth/register`, {
+          email, password, full_name: name.trim(), role: 'candidate',
+        });
+        const { token, user: newUser } = res.data;
+        axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+        useAuthStore.setState({ user: newUser, token, isAuthenticated: true });
+      }
+
+      await pay({
+        email,
+        amount: 500,
+        metadata: { plan_id: 'student', plan_name: 'Student' },
+        onSuccess: () => { window.location.href = '/practice'; },
+        onClose: () => setLoading(false),
+      });
+    } catch (err) {
+      setError(err.response?.data?.error || 'Something went wrong — try again');
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center',
+      background: 'rgba(0,0,0,0.65)', backdropFilter: 'blur(4px)', padding: 16,
+    }}>
+      <div style={{
+        width: '100%', maxWidth: 400, background: 'var(--bg-surface)', border: '1px solid var(--border)',
+        borderRadius: 'var(--r-2xl)', padding: '28px 24px', textAlign: 'center', animation: 'fadeIn 0.25s both',
+      }}>
+        <div style={{ fontSize: 40, marginBottom: 10 }}>🎓</div>
+        <h2 style={{ fontFamily: 'var(--font-display)', fontSize: '1.3rem', fontWeight: 800, marginBottom: 6 }}>
+          That's your 5 free questions!
+        </h2>
+        <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 20, lineHeight: 1.6 }}>
+          Subscribe to keep practicing with unlimited questions, unlimited exams, and full explanations.
+        </p>
+
+        {isAnonymous && (
+          <div style={{ textAlign: 'left', marginBottom: 12 }}>
+            <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 6 }}>
+              Your Name
+            </label>
+            <input
+              type="text"
+              value={name}
+              onChange={e => { setName(e.target.value); setError(''); }}
+              placeholder="e.g. Chidinma Okonkwo"
+              style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--r)', border: '1.5px solid var(--border-md)', background: 'var(--bg-raised)', color: 'var(--text-primary)', fontSize: 14 }}
+            />
+          </div>
+        )}
+
+        <div style={{ textAlign: 'left', marginBottom: 16 }}>
+          <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 6 }}>
+            {isAnonymous ? 'Your Email' : 'Email for your receipt'}
+          </label>
+          <input
+            type="email"
+            value={email}
+            onChange={e => { setEmail(e.target.value); setError(''); }}
+            placeholder="you@example.com"
+            style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--r)', border: `1.5px solid ${error ? 'var(--danger)' : 'var(--border-md)'}`, background: 'var(--bg-raised)', color: 'var(--text-primary)', fontSize: 14 }}
+          />
+          {error && <p style={{ fontSize: 12, color: 'var(--danger)', marginTop: 6 }}>{error}</p>}
+        </div>
+
+        <button className="btn btn-primary" style={{ width: '100%', justifyContent: 'center', marginBottom: 10 }}
+          onClick={handleSubscribe} disabled={loading}>
+          {loading ? 'Opening checkout…' : 'Subscribe — ₦500/month'}
+        </button>
+        <button onClick={onDismiss} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', fontSize: 13, cursor: 'pointer', padding: 8 }}>
+          Not right now
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function PracticeEngine({ config, onFinish }) {
   const [questions,  setQuestions]  = useState([]);
   const [answers,    setAnswers]    = useState({});
@@ -302,9 +436,27 @@ function PracticeEngine({ config, onFinish }) {
   const [showPalette,setShowPalette]= useState(false);
   const [showCalc,   setShowCalc]   = useState(false);
   const [done,       setDone]       = useState(false);
+  // Set from the questions fetch when this candidate is on the free trial —
+  // { remaining } is what's left AFTER this batch was served, so
+  // remaining===0 means these are the last free questions they have.
+  const [freeTrial,  setFreeTrial]  = useState(null);
+  const [showPaywall,setShowPaywall]= useState(false);
   const timerRef = useRef(null);
 
   useEffect(() => { loadQuestions(); }, []);
+
+  // Free trial ran out with this batch — the moment they reveal the answer
+  // to the last question in it, auto-pop the paywall after a short beat so
+  // they get to actually read the explanation first, rather than yanking it
+  // away the instant they answer.
+  useEffect(() => {
+    if (!freeTrial || freeTrial.remaining > 0) return;
+    if (!questions.length) return;
+    const lastQ = questions[questions.length - 1];
+    if (current !== questions.length - 1 || !revealed[lastQ?.id]) return;
+    const t = setTimeout(() => setShowPaywall(true), 2500);
+    return () => clearTimeout(t);
+  }, [current, revealed, freeTrial, questions]);
 
   useEffect(() => {
     if (loading || done) return;
@@ -330,9 +482,19 @@ function PracticeEngine({ config, onFinish }) {
       const res = await axios.get(`${API}/questions`, { params });
       let qs = res.data.questions || [];
       qs = qs.map(q => ({ ...q, options: safeParseArray(q.options) }));
+      // Belt-and-braces: Exam/Speed mode is objective-only (see ExamBuilderPage
+      // and routes/exams.js for the same rule on admin-built exams). This
+      // self-serve practice picker queries questions directly, so filter here
+      // too rather than relying solely on the Paper Type dropdown upstream.
+      if (config.mode !== 'practice') qs = qs.filter(q => q.question_type !== 'essay');
       if (qs.length === 0) qs = generateDemoQuestions(config.subject, config.count);
       if (config.shuffle) qs = qs.sort(() => Math.random() - 0.5);
       setQuestions(qs.slice(0, config.count));
+      // Practice mode only — this is where the free-trial paywall auto-pops
+      // up after the last question. Exam/Speed mode already gets a hard
+      // block via the 402 the global axios interceptor catches, since those
+      // aren't meant to let someone quietly run out mid-timed-session.
+      if (config.mode === 'practice' && res.data.free_trial) setFreeTrial(res.data.free_trial);
     } catch {
       // Demo questions if API fails or no questions found
       setQuestions(generateDemoQuestions(config.subject, config.count));
@@ -360,11 +522,18 @@ function PracticeEngine({ config, onFinish }) {
   const handleFinish = useCallback((auto = false) => {
     clearInterval(timerRef.current);
     setDone(true);
-    const score = questions.reduce((s, q) => {
+    // Theory/essay questions have no single correct answer to grade against
+    // (score comes from a human/AI grader elsewhere, not a right/wrong
+    // check) — they're excluded from both the numerator and denominator
+    // here so a practice session mixing objective + theory questions isn't
+    // unfairly deflated by essay questions that can never contribute a
+    // point under this scoring.
+    const objectiveQs = questions.filter(q => safeParseArray(q.options).length > 0);
+    const score = objectiveQs.reduce((s, q) => {
       const correct = safeParseArray(q.correct_answers);
       return answers[q.id] && correct.map(c=>c.toLowerCase().trim()).includes(answers[q.id].toLowerCase().trim()) ? s+1 : s;
     }, 0);
-    onFinish({ questions, answers, score, total: questions.length, auto });
+    onFinish({ questions, answers, score, total: objectiveQs.length, auto });
   }, [questions, answers, onFinish]);
 
   if (loading) return (
@@ -472,22 +641,39 @@ function PracticeEngine({ config, onFinish }) {
                 </button>
               );
             }) : (
-              // Essay/theory question — no options to select, so there's no click
-              // path that would ever set isRevealed via handleAnswer. Give it its
-              // own explicit reveal action instead of silently showing nothing.
-              !isRevealed && (
-                <button onClick={() => setRevealed(r => ({ ...r, [q.id]: true }))} style={{
-                  padding:'12px 16px', background:'var(--brand-dim)', border:'1.5px solid var(--brand)',
-                  borderRadius:'var(--r-lg)', color:'var(--brand-light)', fontWeight:600, fontSize:14,
-                  cursor:'pointer', width:'100%', WebkitTapHighlightColor:'transparent',
-                }}>
-                  Show Model Answer
-                </button>
-              )
+              // Theory/essay question — no options to pick from. There's no
+              // machine-gradable right/wrong here, so the student writes
+              // their own answer/working, then reveals the step-by-step
+              // explanation whenever they're ready to check their approach.
+              <div>
+                <textarea
+                  value={selected || ''}
+                  onChange={e => setAnswers(a => ({ ...a, [q.id]: e.target.value }))}
+                  placeholder="Write your answer / working here…"
+                  rows={7}
+                  disabled={isRevealed}
+                  style={{
+                    width:'100%', padding:'14px 16px', borderRadius:'var(--r-lg)',
+                    border:'1.5px solid var(--border-md)', background:'var(--bg-surface)',
+                    color:'var(--text-primary)', fontFamily:'var(--font-body)', fontSize:14,
+                    lineHeight:1.7, resize:'vertical',
+                  }}
+                />
+                {!isRevealed && (
+                  <button
+                    className="btn btn-primary"
+                    style={{ marginTop:12, width:'100%', justifyContent:'center' }}
+                    onClick={() => setRevealed(r => ({ ...r, [q.id]: true }))}
+                  >
+                    Show Step-by-Step Explanation
+                  </button>
+                )}
+              </div>
             )}
           </div>
 
-          {/* Explanation (practice mode) */}
+          {/* Explanation (practice mode) — every question type gets one,
+              including theory/essay above, once revealed. */}
           {isRevealed && (
             <ExplanationBox question={q} theme="light" style={{ background:'var(--info-dim)', border:'1px solid var(--info)', borderRadius:'var(--r-xl)', padding:'14px 18px', animation:'fadeIn 0.3s both' }} />
           )}
@@ -506,6 +692,9 @@ function PracticeEngine({ config, onFinish }) {
       </div>
 
       {showCalc && <Calculator onClose={() => setShowCalc(false)} />}
+      {showPaywall && (
+        <FreeTrialPaywall onDismiss={() => setShowPaywall(false)} />
+      )}
     </div>
   );
 }
@@ -516,6 +705,11 @@ function ResultsScreen({ result, config, onRetry, onNew }) {
   const pct = total > 0 ? (score/total)*100 : 0;
   const passed = pct >= 50;
   const [tab, setTab] = useState('summary');
+  // "Skipped" should only count against objectively-gradable questions —
+  // matches how `total` itself already excludes essay/theory questions
+  // (see handleFinish), so this stays consistent with score/total instead
+  // of going negative when theory questions were also answered.
+  const objectiveAnswered = questions.filter(q => safeParseArray(q.options).length > 0 && answers[q.id]).length;
 
   const getGrade = (p) => {
     if (p>=90) return {g:'A1',c:'var(--success)'}; if (p>=80) return {g:'B2',c:'var(--success)'};
@@ -547,7 +741,7 @@ function ResultsScreen({ result, config, onRetry, onNew }) {
             <div style={{ width:1, background:'rgba(255,255,255,0.3)' }}/>
             <div style={{ textAlign:'center' }}><div style={{ fontSize:20, fontWeight:800 }}>{total-score}</div><div style={{ fontSize:10, opacity:0.7, textTransform:'uppercase' }}>Wrong</div></div>
             <div style={{ width:1, background:'rgba(255,255,255,0.3)' }}/>
-            <div style={{ textAlign:'center' }}><div style={{ fontSize:20, fontWeight:800 }}>{total-Object.keys(answers).length}</div><div style={{ fontSize:10, opacity:0.7, textTransform:'uppercase' }}>Skipped</div></div>
+            <div style={{ textAlign:'center' }}><div style={{ fontSize:20, fontWeight:800 }}>{Math.max(0, total-objectiveAnswered)}</div><div style={{ fontSize:10, opacity:0.7, textTransform:'uppercase' }}>Skipped</div></div>
           </div>
         </div>
 
@@ -578,32 +772,41 @@ function ResultsScreen({ result, config, onRetry, onNew }) {
           <div style={{ display:'flex', flexDirection:'column', gap:12 }}>
             {questions.map((q,i) => {
               const opts = safeParseArray(q.options);
+              const isEssay = opts.length === 0;
               const correctAnswers = safeParseArray(q.correct_answers);
               const userAnswer = answers[q.id];
-              const correct = userAnswer && correctAnswers.map(c=>c.toLowerCase().trim()).includes(userAnswer.toLowerCase().trim());
+              const correct = !isEssay && userAnswer && correctAnswers.map(c=>c.toLowerCase().trim()).includes(userAnswer.toLowerCase().trim());
               return (
-                <div key={q.id} style={{ background:'var(--bg-surface)', border:`1px solid ${correct?'rgba(16,185,129,0.3)':userAnswer?'rgba(239,68,68,0.3)':'var(--border)'}`, borderRadius:'var(--r-xl)', padding:'16px 18px' }}>
+                <div key={q.id} style={{ background:'var(--bg-surface)', border:`1px solid ${isEssay ? 'var(--border)' : correct?'rgba(16,185,129,0.3)':userAnswer?'rgba(239,68,68,0.3)':'var(--border)'}`, borderRadius:'var(--r-xl)', padding:'16px 18px' }}>
                   <div style={{ display:'flex', gap:10, marginBottom:10 }}>
-                    <span style={{ fontSize:11, padding:'2px 8px', borderRadius:'var(--r-full)', fontWeight:700, background:correct?'var(--success-dim)':userAnswer?'var(--danger-dim)':'var(--bg-raised)', color:correct?'var(--success)':userAnswer?'var(--danger)':'var(--text-muted)' }}>
-                      {correct?'✓ Correct':userAnswer?'✗ Wrong':'— Skipped'}
+                    <span style={{ fontSize:11, padding:'2px 8px', borderRadius:'var(--r-full)', fontWeight:700, background:isEssay?(userAnswer?'var(--info-dim)':'var(--bg-raised)'):(correct?'var(--success-dim)':userAnswer?'var(--danger-dim)':'var(--bg-raised)'), color:isEssay?(userAnswer?'var(--info)':'var(--text-muted)'):(correct?'var(--success)':userAnswer?'var(--danger)':'var(--text-muted)') }}>
+                      {isEssay ? (userAnswer ? '✍ Answered' : '— Skipped') : (correct?'✓ Correct':userAnswer?'✗ Wrong':'— Skipped')}
                     </span>
                     <span style={{ fontSize:11, color:'var(--text-muted)' }}>Q{i+1}</span>
                   </div>
                   <div style={{ fontSize:13, fontWeight:600, marginBottom:10, lineHeight:1.6 }}><MathText text={q.question_text} /></div>
-                  <div style={{ display:'flex', flexDirection:'column', gap:5 }}>
-                    {opts.map((opt,oi) => {
-                      const isCorrect = correctAnswers.map(c=>c.toLowerCase().trim()).includes(opt.toLowerCase().trim());
-                      const isUser = userAnswer === opt;
-                      return (
-                        <div key={oi} style={{ display:'flex', alignItems:'center', gap:8, padding:'6px 10px', borderRadius:'var(--r)', fontSize:12, background:isCorrect?'var(--success-dim)':isUser&&!isCorrect?'var(--danger-dim)':'transparent' }}>
-                          <span style={{ fontFamily:'var(--font-mono)', fontSize:10, fontWeight:700, color:'var(--text-muted)' }}>{LETTERS[oi]}</span>
-                          <span style={{ color:isCorrect?'var(--success)':isUser&&!isCorrect?'var(--danger)':'var(--text-secondary)' }}><MathText text={opt} inline /></span>
-                          {isCorrect && <span style={{ marginLeft:'auto', fontSize:12 }}>✓</span>}
-                          {isUser && !isCorrect && <span style={{ marginLeft:'auto', fontSize:12 }}>✗</span>}
-                        </div>
-                      );
-                    })}
-                  </div>
+                  {isEssay ? (
+                    userAnswer && (
+                      <div style={{ padding:'10px 12px', background:'var(--bg-raised)', borderRadius:'var(--r-lg)', fontSize:12, color:'var(--text-secondary)', lineHeight:1.7, whiteSpace:'pre-wrap', marginBottom:4 }}>
+                        {userAnswer}
+                      </div>
+                    )
+                  ) : (
+                    <div style={{ display:'flex', flexDirection:'column', gap:5 }}>
+                      {opts.map((opt,oi) => {
+                        const isCorrect = correctAnswers.map(c=>c.toLowerCase().trim()).includes(opt.toLowerCase().trim());
+                        const isUser = userAnswer === opt;
+                        return (
+                          <div key={oi} style={{ display:'flex', alignItems:'center', gap:8, padding:'6px 10px', borderRadius:'var(--r)', fontSize:12, background:isCorrect?'var(--success-dim)':isUser&&!isCorrect?'var(--danger-dim)':'transparent' }}>
+                            <span style={{ fontFamily:'var(--font-mono)', fontSize:10, fontWeight:700, color:'var(--text-muted)' }}>{LETTERS[oi]}</span>
+                            <span style={{ color:isCorrect?'var(--success)':isUser&&!isCorrect?'var(--danger)':'var(--text-secondary)' }}><MathText text={opt} inline /></span>
+                            {isCorrect && <span style={{ marginLeft:'auto', fontSize:12 }}>✓</span>}
+                            {isUser && !isCorrect && <span style={{ marginLeft:'auto', fontSize:12 }}>✗</span>}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                   <div style={{ marginTop:10 }}>
                     <ExplanationBox question={q} theme="light" style={{ padding: '10px 12px', fontSize: 12 }} />
                   </div>

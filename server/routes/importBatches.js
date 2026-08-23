@@ -26,7 +26,7 @@ const AdmZip = require('adm-zip');
 const { v4: uuidv4 } = require('uuid');
 const { getDB } = require('../models/db');
 const { authenticate, authorize } = require('../middleware/auth');
-const { extractQuestionsFromImage, reverifyLowConfidenceQuestion, solveObjectiveQuestion, reconstructDiagramSVG, qualityCheckDiagram } = require('../ai/questionGenerator');
+const { extractQuestionsFromImage, reverifyLowConfidenceQuestion, solveObjectiveQuestion, reconstructDiagramSVG, qualityCheckDiagram, parseGeminiError } = require('../ai/questionGenerator');
 const { computeConfidence } = require('../services/confidenceScoring');
 
 const router = express.Router();
@@ -158,6 +158,14 @@ router.post('/zip', authenticate, authorize('superadmin', 'admin', 'examiner'), 
       let pagesProcessed = 0, pagesFailed = 0;
       const photoImageUrls = {};
       const photoBuffers = {}; // kept in memory for Pass 5 re-verification below
+      // Once Gemini's free-tier quota is confirmed exhausted on one page,
+      // every remaining page in this same zip is guaranteed to fail the
+      // same way — retrying each one individually just burns time and fills
+      // "Pages Needing Attention" with N copies of the same raw error. Skip
+      // straight to marking them failed with one clear message instead; the
+      // admin can use Retry Page on each once the quota resets.
+      let quotaExhausted = false;
+      let quotaMessage = null;
 
       for (const entry of entries) {
         const filename = entry.entryName.split('/').pop();
@@ -185,6 +193,13 @@ router.post('/zip', authenticate, authorize('superadmin', 'admin', 'examiner'), 
         }
 
         try {
+          if (quotaExhausted) {
+            // Don't even attempt the call — same account, same exhausted
+            // quota, guaranteed same failure. Archive the photo (already
+            // done above) and move on so this doesn't take forever.
+            throw Object.assign(new Error(quotaMessage), { isQuotaExceeded: true });
+          }
+
           const result = await extractQuestionsFromImage({
             imageBase64: buffer.toString('base64'),
             mediaType: mimeFor(filename.toLowerCase()),
@@ -207,6 +222,10 @@ router.post('/zip', authenticate, authorize('superadmin', 'admin', 'examiner'), 
           pagesProcessed++;
         } catch (photoErr) {
           console.error(`batch zip photo error (${filename}):`, photoErr.message);
+          if (photoErr.isQuotaExceeded && !quotaExhausted) {
+            quotaExhausted = true;
+            quotaMessage = photoErr.message;
+          }
           await db.execute(
             `INSERT INTO batch_pages (id, import_batch_id, filename, source_paper_id, status, error_message)
              VALUES (?, ?, ?, ?, 'failed', ?)`,
@@ -971,11 +990,20 @@ router.post('/:id/pages/:pageId/retry', authenticate, authorize('superadmin', 'a
         mediaType: mimeFor(page.filename),
       });
     } catch (extractErr) {
+      const geminiErr = parseGeminiError(extractErr);
       await db.execute(
         `UPDATE batch_pages SET status='failed', error_message=?, retry_count=retry_count+1 WHERE id=?`,
-        [extractErr.message, page.id]
+        [geminiErr.message, page.id]
       );
-      return res.status(502).json({ error: 'Retry failed again: ' + extractErr.message });
+      // 429, not 502 — this is the AI provider's rate limit, not our server
+      // failing. A raw 502 with the full nested Gemini error JSON dumped as
+      // the body is what was showing up in "Pages Needing Attention" and in
+      // the browser console as a generic "server responded with 502".
+      const status = geminiErr.isQuotaExceeded ? 429 : 502;
+      return res.status(status).json({
+        error: geminiErr.message,
+        retry_delay_seconds: geminiErr.retryDelaySeconds || null,
+      });
     }
 
     const pageQuestions = (result.questions || []).filter(q => q.question_text?.trim());

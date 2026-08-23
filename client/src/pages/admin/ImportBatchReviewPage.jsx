@@ -67,7 +67,10 @@ export default function ImportBatchReviewPage() {
       toast.success(res.data.message);
       load();
     } catch (err) {
-      toast.error(err.response?.data?.error || 'Retry failed');
+      const msg = err.response?.data?.error || 'Retry failed';
+      const delay = err.response?.data?.retry_delay_seconds;
+      toast.error(delay ? `${msg}` : msg, delay ? { duration: 6000 } : undefined);
+      load(); // refresh so the page's error_message shows the clean quota message, not the stale raw one
     } finally {
       setRetryingPageId(null);
     }
