@@ -438,6 +438,41 @@ router.post('/zip', authenticate, authorize('superadmin', 'admin', 'examiner'), 
   });
 });
 
+// Recomputes an import batch's cached status counts + quality score directly
+// from staged_questions, and persists them. Several actions on the review
+// screen (Quick Verify, Save & Verify, Reject, resolving an answer conflict)
+// change a staged row's review_status but were previously never reflected
+// back onto import_batches — so batch.verified_count silently drifted from
+// the real number of verified rows (e.g. showing 17 when 34 were actually
+// verified). Call this after any write that can change review_status, and
+// also opportunistically on read so already-drifted batches self-heal.
+async function recomputeBatchCounts(db, batchId) {
+  const [rows] = await db.execute(
+    `SELECT review_status, COUNT(*) as cnt FROM staged_questions WHERE import_batch_id=? GROUP BY review_status`,
+    [batchId]
+  );
+  const counts = { verified: 0, needs_review: 0, answer_conflict: 0, duplicate: 0, missing: 0, rejected: 0 };
+  let total = 0;
+  rows.forEach(r => { counts[r.review_status] = r.cnt; total += r.cnt; });
+
+  // Quality score mirrors the same formula used right after import: fully
+  // verified rows count in full, rows still needing review count at half
+  // weight, everything else (rejected/duplicate/missing) doesn't count.
+  const qualityScore = total
+    ? Math.round((counts.verified + counts.needs_review * 0.5) / total * 100)
+    : 0;
+
+  await db.execute(
+    `UPDATE import_batches SET
+     extracted_count=?, verified_count=?, needs_review_count=?,
+     answer_conflict_count=?, duplicate_count=?, missing_count=?, quality_score=?
+     WHERE id=?`,
+    [total, counts.verified, counts.needs_review, counts.answer_conflict,
+     counts.duplicate, counts.missing, qualityScore, batchId]
+  );
+  return counts;
+}
+
 // GET /api/import/batches — list recent batches
 router.get('/', authenticate, authorize('superadmin', 'admin', 'examiner'), async (req, res) => {
   try {
@@ -462,7 +497,21 @@ router.get('/:id', authenticate, authorize('superadmin', 'admin', 'examiner'), a
        LEFT JOIN subjects s ON ib.subject_id = s.id WHERE ib.id=?`, [req.params.id]
     );
     if (!rows[0]) return res.status(404).json({ error: 'Batch not found' });
-    res.json({ batch: rows[0] });
+
+    // Self-heal: if this batch's cached counts have drifted from the actual
+    // staged_questions rows (e.g. from reviews done before this fix), bring
+    // them back in sync before returning, so the Publish button and status
+    // tabs always reflect what's really staged.
+    let batch = rows[0];
+    if (batch.status !== 'published') {
+      await recomputeBatchCounts(db, req.params.id);
+      const [refreshed] = await db.execute(
+        `SELECT ib.*, s.name as subject_name FROM import_batches ib
+         LEFT JOIN subjects s ON ib.subject_id = s.id WHERE ib.id=?`, [req.params.id]
+      );
+      batch = refreshed[0] || batch;
+    }
+    res.json({ batch });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -535,6 +584,10 @@ router.put('/:id/staged/:stagedId', authenticate, authorize('superadmin', 'admin
       `UPDATE staged_questions SET ${setClauses.join(', ')} WHERE id=? AND import_batch_id=?`,
       params
     );
+    // Keep the batch's cached counts (shown on the review header, status
+    // tabs, and the Publish button) in sync with this status change instead
+    // of letting them go stale until the batch is next reloaded.
+    await recomputeBatchCounts(db, req.params.id);
     res.json({ message: 'Staged question updated' });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
