@@ -23,7 +23,12 @@ function restoreToken() {
 
 restoreToken();
 
-// Intercept every response — on 401, clear session and go to login
+// Intercept every response — on 401, clear session and go to login. On 402
+// with code FREE_LIMIT_REACHED, the candidate has used all 10 free trial
+// questions (see routes/questions.js) — send them to the pricing page
+// instead of letting whichever screen they were on show an empty/broken
+// state. Handled globally here so every page that fetches questions
+// (Practice Mode, Study Mode, Topic practice) gets this for free.
 axios.interceptors.response.use(
   (res) => res,
   (error) => {
@@ -34,6 +39,11 @@ axios.interceptors.response.use(
         localStorage.removeItem('examos-auth');
         delete axios.defaults.headers.common['Authorization'];
         window.location.href = '/login';
+      }
+    }
+    if (error.response?.status === 402 && error.response?.data?.code === 'FREE_LIMIT_REACHED') {
+      if (!window.location.pathname.startsWith('/exam/billing')) {
+        window.location.href = '/exam/billing?trial_ended=true';
       }
     }
     return Promise.reject(error);

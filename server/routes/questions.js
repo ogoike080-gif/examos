@@ -7,6 +7,7 @@ const { getDB } = require('../models/db');
 const { authenticate, authorize } = require('../middleware/auth');
 const { generateQuestionsWithAI, extractQuestionsFromImage, explainAnswer } = require('../ai/questionGenerator');
 const { cleanMathNotation, cleanQuestionFields } = require('../utils/mathNotation');
+const { FREE_QUESTION_LIMIT, hasActivePaidPlan, getRemainingQuota, consumeQuota } = require('../services/freeTrial');
 const AdmZip = require('adm-zip');
 const sharp = require('sharp');
 
@@ -150,6 +151,30 @@ router.get('/', authenticate, async (req, res) => {
     const limitNum = Math.max(1, Math.min(200, Number(limit) || 25));
     const pageNum = Math.max(1, Number(page) || 1);
     const offsetNum = (pageNum - 1) * limitNum;
+
+    // Free-trial gate: a candidate who hasn't subscribed gets 10 free
+    // questions total, then gets asked to upgrade. Paid users and staff
+    // roles (admin/examiner/etc.) never hit this. If quota is already
+    // exhausted, don't even touch the questions table — just tell the
+    // client to show the upgrade prompt.
+    let effectiveLimit = limitNum;
+    let freeTrial = null;
+    if (req.user.role === 'candidate') {
+      const isPaid = await hasActivePaidPlan(db, req.user.id);
+      if (!isPaid) {
+        const remaining = await getRemainingQuota(db, req.user.id);
+        if (remaining <= 0) {
+          return res.status(402).json({
+            error: 'You\'ve used all 10 free questions. Subscribe to a plan to keep practicing.',
+            code: 'FREE_LIMIT_REACHED',
+            free_limit: FREE_QUESTION_LIMIT,
+          });
+        }
+        effectiveLimit = Math.min(limitNum, remaining);
+        freeTrial = { remaining_before: remaining, limit: FREE_QUESTION_LIMIT };
+      }
+    }
+
     let where = 'q.is_active = TRUE';
     const params = [];
 
@@ -184,7 +209,7 @@ router.get('/', authenticate, async (req, res) => {
        LEFT JOIN users u ON q.created_by = u.id
        WHERE ${where}
        ORDER BY (q.question_number IS NULL) ASC, q.question_number ASC, q.created_at DESC
-       LIMIT ${limitNum} OFFSET ${offsetNum}`,
+       LIMIT ${effectiveLimit} OFFSET ${offsetNum}`,
       params
     );
 
@@ -193,7 +218,19 @@ router.get('/', authenticate, async (req, res) => {
       params
     );
 
-    res.json({ questions, total });
+    let freeTrialStatus;
+    if (freeTrial) {
+      // Only consume quota for what was actually handed back — if fewer
+      // questions matched the filters than the trial had left, no sense
+      // burning unused quota on questions that were never served.
+      const consumed = await consumeQuota(db, req.user.id, questions.length);
+      freeTrialStatus = {
+        limit: freeTrial.limit,
+        remaining: Math.max(0, freeTrial.remaining_before - consumed),
+      };
+    }
+
+    res.json({ questions, total, free_trial: freeTrialStatus });
   } catch (err) {
     console.error('GET /questions error:', err.message);
     res.status(500).json({ error: 'Failed to fetch questions: ' + err.message });

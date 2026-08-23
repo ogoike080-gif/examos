@@ -95,7 +95,13 @@ app.use(
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
-        scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
+        // js.paystack.co is required for the checkout widget itself
+        // (window.PaystackPop) — without it here, the script is silently
+        // blocked by the browser and "Processing..." spins forever with no
+        // visible error except in devtools. frameSrc is needed too since
+        // Paystack's checkout renders in an iframe, not just a script tag.
+        scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https://js.paystack.co"],
+        frameSrc: ["'self'", "https://js.paystack.co", "https://checkout.paystack.com"],
         styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
         fontSrc: ["'self'", "https://fonts.gstatic.com", "data:"],
         imgSrc: ["'self'", "data:", "blob:"],
