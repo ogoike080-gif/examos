@@ -12,6 +12,10 @@ export default function ExamBuilderPage() {
 
   const [subjects, setSubjects] = useState([]);
   const [allQuestions, setAllQuestions] = useState([]);
+  // Exam mode is strictly objective — matches the same exclusion the
+  // backend enforces in POST /api/exams, kept here too so the picker never
+  // even offers an essay/theory question in the first place.
+  const objectiveQuestions = allQuestions.filter(q => q.question_type !== 'essay');
   const [selectedQIds, setSelectedQIds] = useState([]);
   const [saving, setSaving] = useState(false);
   const [tab, setTab] = useState('details'); // details | questions | settings
@@ -67,12 +71,20 @@ export default function ExamBuilderPage() {
     setSaving(true);
     try {
       const payload = { ...form, question_ids: selectedQIds };
+      let res;
       if (isEdit) {
-        await examAPI.update(id, payload);
+        res = await examAPI.update(id, payload);
         toast.success('Exam updated');
       } else {
-        await examAPI.create(payload);
+        res = await examAPI.create(payload);
         toast.success('Exam created');
+      }
+      // Exam mode is objective-only — the backend silently drops any essay/
+      // theory questions from the set attached to the exam, since they can't
+      // be auto-graded within a timed session. Surface that here so it's
+      // not a silent surprise if some were selected.
+      if (res.data?.excluded_essay_count) {
+        toast(`${res.data.excluded_essay_count} essay/theory question(s) were left out — exam mode only features objective questions. They're still available in Practice Mode.`, { icon: 'ℹ️', duration: 6000 });
       }
       navigate('/admin/exams');
     } catch (err) { toast.error(err.response?.data?.error || 'Save failed'); }
@@ -180,11 +192,18 @@ export default function ExamBuilderPage() {
       {tab === 'questions' && (
         <div>
           <div style={{ marginBottom:12, display:'flex', justifyContent:'space-between', alignItems:'center' }}>
-            <span style={{ fontSize:13, color:'var(--text-secondary)' }}>{selectedQIds.length} selected · {allQuestions.length} available</span>
-            <Button size="sm" variant="ghost" onClick={() => setSelectedQIds(allQuestions.map(q => q.id))}>Select All</Button>
+            <span style={{ fontSize:13, color:'var(--text-secondary)' }}>{selectedQIds.length} selected · {objectiveQuestions.length} available</span>
+            <Button size="sm" variant="ghost" onClick={() => setSelectedQIds(objectiveQuestions.map(q => q.id))}>Select All</Button>
+          </div>
+          <div style={{
+            marginBottom:12, padding:'10px 14px', background:'var(--accent-dim)',
+            border:'1px solid rgba(245,166,35,0.2)', borderRadius:'var(--r)',
+            fontSize:12, color:'var(--text-secondary)', lineHeight:1.6,
+          }}>
+            ℹ️ Only objective questions are shown — exam mode is auto-graded and timed, so essay/theory questions aren't available here. They're still fully usable in Practice Mode.
           </div>
           <div style={{ background:'var(--bg-surface)', border:'1px solid var(--border)', borderRadius:'var(--r-lg)', overflow:'hidden', maxHeight:500, overflowY:'auto' }}>
-            {allQuestions.map(q => {
+            {objectiveQuestions.map(q => {
               const opts = (() => { try { return JSON.parse(q.options||'[]'); } catch { return []; } })();
               const sel = selectedQIds.includes(q.id);
               return (

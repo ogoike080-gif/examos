@@ -15,6 +15,9 @@ export default function ExamsPage() {
   const [loading, setLoading] = useState(true);
   const [editModal, setEditModal] = useState(null); // exam object being edited
   const [saving, setSaving] = useState(false);
+  const [yearInput, setYearInput] = useState('');
+  const [deletingYear, setDeletingYear] = useState(false);
+  const [deletingId, setDeletingId] = useState(null);
   const [editForm, setEditForm] = useState({
     scheduled_at: '', duration_minutes: '', status: '',
     title: '', pass_marks: '', total_marks: '',
@@ -73,6 +76,49 @@ export default function ExamsPage() {
     } catch { toast.error('Update failed'); }
   };
 
+  const deleteExam = async (exam) => {
+    if (!confirm(`Delete "${exam.title}"? This cannot be undone.`)) return;
+    setDeletingId(exam.id);
+    try {
+      await examAPI.delete(exam.id);
+      toast.success('Exam deleted');
+      load();
+    } catch (err) {
+      const msg = err.response?.data?.error || 'Delete failed';
+      // 409 = candidates have already taken this exam; offer to force it
+      if (err.response?.status === 409 && confirm(`${msg}\n\nDelete anyway, including their results?`)) {
+        try {
+          await examAPI.delete(exam.id, true);
+          toast.success('Exam and its results deleted');
+          load();
+        } catch { toast.error('Delete failed'); }
+      } else {
+        toast.error(msg);
+      }
+    } finally { setDeletingId(null); }
+  };
+
+  const deleteByYear = async () => {
+    const year = yearInput.trim();
+    if (!/^\d{4}$/.test(year)) return toast.error('Enter a 4-digit year, e.g. 1993');
+    if (!confirm(`Delete every exam with "${year}" in its title?`)) return;
+    setDeletingYear(true);
+    try {
+      const res = await examAPI.deleteByYear(year);
+      const { deleted, blocked, message } = res.data;
+      if (blocked?.length && confirm(`${message}\n\nDelete those ${blocked.length} too anyway, including their results?`)) {
+        const forced = await examAPI.deleteByYear(year, true);
+        toast.success(forced.data.message);
+      } else {
+        toast.success(message || `Deleted ${deleted} exam(s)`);
+      }
+      setYearInput('');
+      load();
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Delete failed');
+    } finally { setDeletingYear(false); }
+  };
+
   const card = {
     background: 'var(--bg-surface)', border: '1px solid var(--border)',
     borderRadius: 'var(--r-lg)', overflow: 'hidden',
@@ -89,12 +135,25 @@ export default function ExamsPage() {
     <div style={{ padding: '28px 32px' }}>
 
       {/* Header */}
-      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom: 24 }}>
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom: 24, gap: 16, flexWrap: 'wrap' }}>
         <div>
           <h1 style={{ fontFamily:'var(--font-display)', fontSize:24, fontWeight:800, letterSpacing:'-0.03em' }}>Exams</h1>
           <p style={{ fontSize:13, color:'var(--text-secondary)', marginTop:3 }}>{exams.length} total exams</p>
         </div>
-        <Button onClick={() => navigate('/admin/exams/new')}>+ Create Exam</Button>
+        <div style={{ display:'flex', gap:10, alignItems:'center', flexWrap:'wrap' }}>
+          <div style={{ display:'flex', alignItems:'center', gap:6 }}>
+            <input
+              value={yearInput}
+              onChange={e => setYearInput(e.target.value.replace(/[^0-9]/g, '').slice(0,4))}
+              placeholder="Year e.g. 1993"
+              style={{ width: 130 }}
+            />
+            <Button size="sm" variant="danger" onClick={deleteByYear} loading={deletingYear} disabled={!yearInput.trim()}>
+              Delete by Year
+            </Button>
+          </div>
+          <Button onClick={() => navigate('/admin/exams/new')}>+ Create Exam</Button>
+        </div>
       </div>
 
       {loading ? (
@@ -166,6 +225,9 @@ export default function ExamsPage() {
                           if (confirm('End this exam for all candidates?')) changeStatus(exam.id, 'completed');
                         }}>End</Button>
                       )}
+                      <Button size="xs" variant="danger" onClick={() => deleteExam(exam)} loading={deletingId === exam.id}>
+                        🗑 Delete
+                      </Button>
                     </div>
                   </td>
                 </tr>

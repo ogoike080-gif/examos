@@ -16,6 +16,8 @@ export const examAPI = {
   get: (id) => axios.get(`${API}/exams/${id}`),
   create: (data) => axios.post(`${API}/exams`, data),
   update: (id, data) => axios.put(`${API}/exams/${id}`, data),
+  delete: (id, force) => axios.delete(`${API}/exams/${id}`, { params: force ? { force: true } : {} }),
+  deleteByYear: (year, force) => axios.delete(`${API}/exams/by-year/${year}`, { params: force ? { force: true } : {} }),
   startSession: (id, deviceFingerprint) =>
     axios.post(`${API}/exams/${id}/start-session`, { device_fingerprint: deviceFingerprint }),
   saveAnswer: (sessionId, questionId, answer) =>

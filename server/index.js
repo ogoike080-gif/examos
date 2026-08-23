@@ -39,11 +39,8 @@ const server = http.createServer(app);
 app.set('trust proxy', 1);
 
 const gamificationRoutes = require('./routes/gamification');
-app.use('/api/gamification', gamificationRoutes);
-
 const paymentsRoutes = require('./routes/payments');
-app.use('/api/payments', paymentsRoutes);
-
+const { paystackWebhookHandler } = paymentsRoutes;
 
 // ── CORS: allow localhost AND any 192.168.x.x / 10.x.x.x on port 3000 ──
 function isAllowedOrigin(origin) {
@@ -127,6 +124,16 @@ const authLimiter = rateLimit({
 });
 app.use('/api/auth/', authLimiter);
 
+// Paystack webhook — MUST be registered before express.json() below and
+// given the raw request body, not the parsed one. Signature verification
+// (see paystackWebhookHandler) is an HMAC over the exact raw bytes Paystack
+// sent; verifying against a re-serialized JSON object can silently mismatch
+// and either reject genuine webhooks or (worse) accept a forged one if the
+// check is loosened to compensate. This is also the *reliable* path for
+// activating a subscription — unlike the browser-only /verify call, this
+// fires even if the student closes the tab right after paying.
+app.post('/api/payments/webhook', express.raw({ type: 'application/json' }), paystackWebhookHandler);
+
 // Body parsing
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
@@ -154,6 +161,14 @@ app.use('/api/settings',   settingsRoutes);
 app.use('/api/results',  resultsRoutes);
 app.use('/api/ai',       aiRoutes);
 app.use('/api/parent',   parentRoutes);
+// gamification + payments were previously mounted above, before helmet/cors/
+// rate-limiting/body-parsing had run — every POST to either (award XP,
+// initialize payment, verify payment) crashed with "Cannot destructure
+// property of req.body as it is undefined" before it ever reached its own
+// logic. Moved here, after express.json()/urlencoded(), where every other
+// POST route already correctly lives.
+app.use('/api/gamification', gamificationRoutes);
+app.use('/api/payments',   paymentsRoutes);
 
 // Health check — shows server IP so students know what to connect to
 app.get('/api/health', (req, res) => {

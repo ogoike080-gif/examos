@@ -6,6 +6,14 @@ const { gradeEssayWithAI } = require('../ai/questionGenerator');
 
 const router = express.Router();
 
+// Exam mode is timed, auto-graded, and proctored — it's built around
+// objective questions that can be scored instantly. Essay/theory questions
+// need a human (or AI-assisted) grader after the fact, which doesn't fit
+// that flow, so exam mode strictly excludes them; essay/theory questions
+// stay available for Practice Mode, where each answer gets an explanation
+// instead of a right/wrong grade. Practice mode is unaffected by this list.
+const NON_OBJECTIVE_TYPES = ['essay'];
+
 function safeParseArray(val) {
   if (Array.isArray(val)) return val;
   if (!val) return [];
@@ -358,12 +366,25 @@ router.post('/', authenticate, authorize('superadmin','admin','examiner'), async
       `INSERT INTO exams (id,title,description,subject_id,exam_type,duration_minutes,total_marks,pass_marks,instructions,settings,question_config,scheduled_at,status,created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'scheduled',?)`,
       [id,title,description,subject_id,exam_type,duration_minutes,total_marks,pass_marks,instructions,JSON.stringify(defaultSettings),JSON.stringify(question_config||{}),scheduled_at||null,req.user.id]
     );
+    let excludedEssay = 0;
     if (question_ids?.length) {
-      for (let i=0;i<question_ids.length;i++)
-        await db.execute('INSERT INTO exam_questions (id,exam_id,question_id,display_order) VALUES (?,?,?,?)',[uuidv4(),id,question_ids[i],i+1]);
+      // Exam mode is objective-only — silently including an essay question
+      // here would mean it can never be answered correctly/incorrectly by
+      // the auto-grader, and would sit unresolved forever. Filter it out
+      // instead, and tell the caller how many were dropped so the exam
+      // builder UI can surface that to the admin.
+      const [typeRows] = await db.query(
+        'SELECT id, question_type FROM questions WHERE id IN (?)', [question_ids]
+      );
+      const typeById = new Map(typeRows.map(r => [r.id, r.question_type]));
+      const objectiveIds = question_ids.filter(qid => !NON_OBJECTIVE_TYPES.includes(typeById.get(qid)));
+      excludedEssay = question_ids.length - objectiveIds.length;
+
+      for (let i=0;i<objectiveIds.length;i++)
+        await db.execute('INSERT INTO exam_questions (id,exam_id,question_id,display_order) VALUES (?,?,?,?)',[uuidv4(),id,objectiveIds[i],i+1]);
     }
     const [newExam] = await db.execute('SELECT * FROM exams WHERE id=?',[id]);
-    res.status(201).json({ exam: newExam[0] });
+    res.status(201).json({ exam: newExam[0], excluded_essay_count: excludedEssay });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -395,6 +416,87 @@ router.put('/:id', authenticate, authorize('superadmin','admin','examiner'), asy
   } catch (err) {
     console.error('PUT /exams/:id error:', err.message);
     res.status(500).json({ error: 'Update failed: ' + err.message });
+  }
+});
+
+// DELETE /api/exams/by-year/:year — bulk-delete every exam whose title
+// contains the given year (e.g. "2024" matches "WAEC 2024 - Mathematics").
+// Exams don't have a dedicated year column — the year lives in the title by
+// convention (as set by the exam builder / import publish flow) — so this
+// matches on that. Registered before DELETE '/:id' so Express doesn't try
+// to match "by-year" itself as an :id.
+// Blocks deletion of any exam that already has real candidate activity
+// (submitted or in-progress sessions) unless ?force=true is passed, since
+// that's the difference between "clean up an unused draft" and "erase
+// results students already sat for".
+router.delete('/by-year/:year', authenticate, authorize('superadmin','admin'), async (req, res) => {
+  try {
+    const db = getDB();
+    const year = req.params.year;
+    if (!/^\d{4}$/.test(year)) return res.status(400).json({ error: 'year must be a 4-digit year, e.g. 1993' });
+    const force = req.query.force === 'true';
+
+    const [matches] = await db.execute(
+      `SELECT id, title FROM exams WHERE title LIKE ?`,
+      [`%${year}%`]
+    );
+    if (!matches.length) return res.json({ deleted: 0, blocked: [], message: `No exams found matching ${year}` });
+
+    const ids = matches.map(m => m.id);
+    const [sessionCounts] = await db.query(
+      `SELECT exam_id, COUNT(*) as cnt FROM exam_sessions WHERE exam_id IN (?) AND status IN ('active','paused','waiting','submitted')
+       GROUP BY exam_id`,
+      [ids]
+    );
+    const withSessions = new Set(sessionCounts.map(r => r.exam_id));
+
+    const toDelete = force ? ids : ids.filter(id => !withSessions.has(id));
+    const blocked = force ? [] : matches.filter(m => withSessions.has(m.id)).map(m => ({ id: m.id, title: m.title }));
+
+    if (toDelete.length) {
+      await db.query(`DELETE FROM exams WHERE id IN (?)`, [toDelete]);
+    }
+
+    res.json({
+      deleted: toDelete.length,
+      blocked,
+      message: blocked.length
+        ? `Deleted ${toDelete.length} exam(s). ${blocked.length} exam(s) for ${year} were kept because candidates have already taken them — pass force=true to delete anyway.`
+        : `Deleted ${toDelete.length} exam(s) for ${year}.`,
+    });
+  } catch (err) {
+    console.error('DELETE /exams/by-year/:year error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/exams/:id — same "has candidates already sat it?" guard as
+// the by-year bulk delete above, for the single-exam case.
+router.delete('/:id', authenticate, authorize('superadmin','admin'), async (req, res) => {
+  try {
+    const db = getDB();
+    const force = req.query.force === 'true';
+
+    const [exam] = await db.execute('SELECT id, title FROM exams WHERE id=?', [req.params.id]);
+    if (!exam[0]) return res.status(404).json({ error: 'Exam not found' });
+
+    if (!force) {
+      const [sessions] = await db.execute(
+        "SELECT COUNT(*) as cnt FROM exam_sessions WHERE exam_id=? AND status IN ('active','paused','waiting','submitted')",
+        [req.params.id]
+      );
+      if (sessions[0].cnt > 0) {
+        return res.status(409).json({
+          error: `${sessions[0].cnt} candidate(s) have already taken or are taking this exam. Pass force=true to delete anyway.`,
+        });
+      }
+    }
+
+    await db.execute('DELETE FROM exams WHERE id=?', [req.params.id]);
+    res.json({ message: 'Exam deleted' });
+  } catch (err) {
+    console.error('DELETE /exams/:id error:', err.message);
+    res.status(500).json({ error: err.message });
   }
 });
 
