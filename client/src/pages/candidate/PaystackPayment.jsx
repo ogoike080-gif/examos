@@ -93,16 +93,42 @@ const PLANS = [
   },
 ];
 
+// A real, deliverable email is required — Paystack needs somewhere to send
+// the receipt to, and rejects placeholder addresses outright. Candidate
+// accounts created via bulk import / name-only login (see routes/
+// candidates.js) get an auto-generated `@ogotech.internal` address purely
+// to satisfy the DB's NOT NULL constraint — it was never meant to be used
+// for anything real, and sending it straight to Paystack is exactly what
+// was producing '"email" must be a valid email'.
+function isRealEmail(email) {
+  if (!email) return false;
+  if (email.endsWith('@ogotech.internal')) return false;
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
 export function SubscriptionPlans({ currentPlan = 'free', userEmail, onSuccess }) {
   const [loading, setLoading] = useState(null);
   const { pay } = usePaystack();
+  const needsEmail = !isRealEmail(userEmail);
+  const [enteredEmail, setEnteredEmail] = useState('');
+  const [emailError, setEmailError] = useState('');
 
   const handleSubscribe = async (plan) => {
     if (plan.price === 0) return;
+
+    let payEmail = userEmail;
+    if (needsEmail) {
+      if (!isRealEmail(enteredEmail)) {
+        setEmailError('Enter a valid email — Paystack sends your receipt there');
+        return;
+      }
+      payEmail = enteredEmail;
+    }
+
     setLoading(plan.id);
     try {
       await pay({
-        email: userEmail,
+        email: payEmail,
         amount: plan.price,
         metadata: { plan_id: plan.id, plan_name: plan.name },
         onSuccess: (data) => {
@@ -129,6 +155,27 @@ export function SubscriptionPlans({ currentPlan = 'free', userEmail, onSuccess }
           Unlock premium features to supercharge your exam preparation
         </p>
       </div>
+
+      {needsEmail && (
+        <div style={{
+          maxWidth: 420, margin: '0 auto 28px', padding: '14px 18px',
+          background: 'var(--bg-surface)', border: '1.5px solid var(--border-md)',
+          borderRadius: 'var(--r-lg)',
+        }}>
+          <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 }}>
+            Email for your receipt
+          </label>
+          <input
+            type="email"
+            value={enteredEmail}
+            onChange={e => { setEnteredEmail(e.target.value); setEmailError(''); }}
+            placeholder="you@example.com"
+            style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--r)', border: `1.5px solid ${emailError ? 'var(--danger)' : 'var(--border-md)'}`, background: 'var(--bg-raised)', color: 'var(--text-primary)', fontSize: 14 }}
+          />
+          {emailError && <p style={{ fontSize: 12, color: 'var(--danger)', marginTop: 6 }}>{emailError}</p>}
+          {!emailError && <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 6 }}>Your login doesn't use an email, but Paystack needs a real one to send your payment receipt to.</p>}
+        </div>
+      )}
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: 16 }}>
         {PLANS.map(plan => {

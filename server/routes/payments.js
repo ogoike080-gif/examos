@@ -89,6 +89,12 @@ router.post('/initialize', authenticate, async (req, res) => {
 
     const { email, amount, metadata } = req.body || {};
     if (!email || !amount) return res.status(400).json({ error: 'email and amount required' });
+    // Defensive check mirroring the client-side guard in PaystackPayment.jsx —
+    // catches direct API calls too, and gives a clearer error than Paystack's
+    // own "email must be a valid email" 400 from checkout/request_inline.
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.endsWith('@ogotech.internal')) {
+      return res.status(400).json({ error: 'A valid email is required for checkout' });
+    }
 
     // Reject up front if the plan+amount pair doesn't match what that plan
     // actually costs — stops someone initializing a "School" purchase for

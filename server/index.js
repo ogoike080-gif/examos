@@ -102,7 +102,7 @@ app.use(
         // Paystack's checkout renders in an iframe, not just a script tag.
         scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https://js.paystack.co"],
         frameSrc: ["'self'", "https://js.paystack.co", "https://checkout.paystack.com"],
-        styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+        styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com", "https://paystack.com"],
         fontSrc: ["'self'", "https://fonts.gstatic.com", "data:"],
         imgSrc: ["'self'", "data:", "blob:"],
         mediaSrc: ["'self'", "data:", "blob:"],
