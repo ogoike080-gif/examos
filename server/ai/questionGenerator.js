@@ -478,10 +478,37 @@ Rules:
  * correct_answers value but an empty explanation field (e.g. older imports
  * done before explanations were required). Since the answer is already
  * confirmed, this only needs to narrate the reasoning to it, not verify it.
+ *
+ * question_type-aware: MCQ/objective questions get an explanation of how to
+ * reach the recorded correct answer. Essay/theory questions have no single
+ * "correct answer" to check against, so they instead get a model-answer-
+ * style explanation of how to approach and structure a strong response —
+ * previously these were entirely unsupported (the caller required a
+ * non-empty correct_answers array), so essay/theory questions could never
+ * get an auto-generated explanation at all, regardless of retries.
+ *
+ * A transient failure from the AI call is retried a couple of times with a
+ * short backoff before giving up — a single dropped/rate-limited call
+ * shouldn't permanently deny a question its explanation.
  */
-async function explainAnswer({ question_text, options, correct_answers, subject }) {
+async function explainAnswer({ question_text, options, correct_answers, subject, question_type }) {
   const correctList = Array.isArray(correct_answers) ? correct_answers : [];
-  const prompt = `You are an experienced ${subject || ''} exam tutor. A student just answered this question and wants to understand how the correct answer is reached.
+  const isEssayLike = question_type === 'essay' || (!options?.length && correctList.length === 0);
+
+  const prompt = isEssayLike
+    ? `You are an experienced ${subject || ''} exam tutor. A student just answered this essay/theory question and wants guidance on how a strong answer is built.
+
+Question: ${question_text}
+
+There is no single fixed correct answer to check against — instead, explain the reasoning and structure a strong answer would follow: the key points/steps a student should cover, and why each matters. Suitable for a West African secondary school student preparing for WAEC/JAMB/NECO. Keep it focused: a few sentences to a short paragraph, not an essay.
+
+Write any mathematical content as LaTeX wrapped in single dollar signs, e.g. $x^2 + 3x - 4 = 0$, $\\frac{1}{2}$, $30^\\circ$ — this gets rendered with a real math typesetting engine, so don't convert it to Unicode or plain text yourself.
+
+Respond in JSON only (no markdown, no backticks):
+{
+  "explanation": "..."
+}`
+    : `You are an experienced ${subject || ''} exam tutor. A student just answered this question and wants to understand how the correct answer is reached.
 
 Question: ${question_text}
 
@@ -499,12 +526,20 @@ Respond in JSON only (no markdown, no backticks):
   "explanation": "..."
 }`;
 
-  const response = await ai.models.generateContent({
-    model: MODEL,
-    contents: prompt,
-  });
-  const result = extractJSON(response.text);
-  return result.explanation || '';
+  let lastErr;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const response = await ai.models.generateContent({ model: MODEL, contents: prompt });
+      const result = extractJSON(response.text);
+      if (result.explanation) return result.explanation;
+      lastErr = new Error('AI returned no explanation field');
+    } catch (err) {
+      lastErr = err;
+    }
+    if (attempt < 3) await new Promise(r => setTimeout(r, 800 * attempt));
+  }
+  console.error('explainAnswer failed after retries:', lastErr?.message);
+  return '';
 }
 
 /**

@@ -345,7 +345,7 @@ router.post('/:id/generate-explanation', authenticate, async (req, res) => {
   try {
     const db = getDB();
     const [rows] = await db.execute(
-      `SELECT q.id, q.question_text, q.options, q.correct_answers, q.explanation, s.name AS subject_name
+      `SELECT q.id, q.question_text, q.question_type, q.options, q.correct_answers, q.explanation, s.name AS subject_name
        FROM questions q LEFT JOIN subjects s ON q.subject_id = s.id
        WHERE q.id = ?`,
       [req.params.id]
@@ -362,7 +362,12 @@ router.post('/:id/generate-explanation', authenticate, async (req, res) => {
     const correct_answers = Array.isArray(question.correct_answers) ? question.correct_answers
       : (() => { try { return JSON.parse(question.correct_answers || '[]'); } catch { return []; } })();
 
-    if (!correct_answers.length) {
+    // Essay/theory questions have no single correct_answers value by design
+    // (there's nothing to "match" against) — explainAnswer handles that case
+    // with a model-answer-style explanation instead. Only genuinely block
+    // objective-type questions that are missing a recorded answer, since
+    // there's nothing true to explain from there.
+    if (!correct_answers.length && question.question_type !== 'essay') {
       return res.status(400).json({ error: 'This question has no recorded correct answer to explain from' });
     }
 
@@ -371,6 +376,7 @@ router.post('/:id/generate-explanation', authenticate, async (req, res) => {
       options,
       correct_answers,
       subject: question.subject_name,
+      question_type: question.question_type,
     });
 
     if (!explanation) {

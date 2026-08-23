@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import MathText from './MathText';
-import { questionAPI } from '../utils/api';
+import { requestExplanation } from '../utils/explanationQueue';
 
 /**
  * The explanation box shown under a revealed question. Two jobs:
@@ -40,10 +40,14 @@ export default function ExplanationBox({ question, onExplanationGenerated, theme
     setLoading(true);
     setFailed(false);
 
-    questionAPI.generateExplanation(question.id)
-      .then((res) => {
+    // Goes through the shared queue rather than calling the API directly —
+    // when many questions reveal at once (e.g. a full Review Answers
+    // screen), this throttles concurrent AI calls and retries transient
+    // failures instead of every box racing the API and some silently
+    // losing out. See utils/explanationQueue.js.
+    requestExplanation(question.id)
+      .then((text) => {
         if (cancelled) return;
-        const text = res.data?.explanation;
         if (text) {
           setExplanation(text);
           onExplanationGenerated && onExplanationGenerated(question.id, text);
