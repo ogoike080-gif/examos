@@ -1,21 +1,33 @@
-// A brand-new candidate account gets 10 free questions to try the platform
-// with, tracked per-user and never reset — once used up, they're asked to
-// subscribe. This is intentionally separate from the "5 exams/month" free
-// allowance shown on the pricing page: that's the ongoing free plan's
-// monthly exam quota, this is the one-time first-look trial for someone who
-// just signed up and hasn't picked a plan yet. Anyone on a paid plan skips
-// this check entirely.
+// A brand-new candidate account gets 5 free questions to try the platform
+// with, tracked per-user (or per-anonymous-visitor) and never reset — once
+// used up, they're asked to subscribe. This is intentionally separate from
+// the "5 exams/month" free allowance shown on the pricing page: that's the
+// ongoing free plan's monthly exam quota, this is the one-time first-look
+// trial for someone who just signed up (or hasn't even signed up yet) and
+// hasn't picked a plan. Anyone on a paid plan skips this check entirely.
 
 const FREE_QUESTION_LIMIT = 5;
 
+let widened = false; // only need to attempt the ALTER once per server process
 async function ensureTable(db) {
   await db.execute(`
     CREATE TABLE IF NOT EXISTS free_trial_usage (
-      user_id VARCHAR(36) PRIMARY KEY,
+      user_id VARCHAR(64) PRIMARY KEY,
       questions_used INT NOT NULL DEFAULT 0,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
     )
   `);
+  // Widen an already-existing table from an earlier deploy where this was
+  // VARCHAR(36) — that size only fit a plain user-id UUID, not the
+  // `anon:<uuid>` keys used for anonymous visitors (41 chars), which would
+  // silently fail to save on INSERT. Harmless/no-op once already widened;
+  // only attempted once per process rather than on every request.
+  if (!widened) {
+    widened = true;
+    try {
+      await db.execute(`ALTER TABLE free_trial_usage MODIFY user_id VARCHAR(64)`);
+    } catch (e) { /* already the right width, or DB user lacks ALTER — either way, non-fatal */ }
+  }
 }
 
 // True if this user currently has an active paid subscription. Reads the

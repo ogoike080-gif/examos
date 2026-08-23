@@ -168,20 +168,32 @@ router.get('/', optionalAuthenticate, async (req, res) => {
     let freeTrial = null;
     const isAnonymous = !req.user;
     const anonId = req.headers['x-anon-id'];
-    if (isAnonymous || req.user.role === 'candidate') {
-      const quotaKey = isAnonymous ? (anonId ? `anon:${anonId}` : null) : req.user.id;
-      // No anon id sent at all — can't track this visitor's quota, so rather
-      // than either trusting them unlimited or blocking outright, fall back
-      // to serving normally-limited results with no free-trial bookkeeping.
-      // In practice the client always sends this (see main.jsx), so this is
-      // just a safety fallback, not the expected path.
-      if (quotaKey) {
-        const isPaid = isAnonymous ? false : await hasActivePaidPlan(db, req.user.id);
-        if (!isPaid) {
+    // The 5-free-question gate applies ONLY to a completely anonymous
+    // "Practice Free" visitor with no account at all. An enrolled candidate
+    // who logs in with their surname/reg-number (see routes/auth.js) is
+    // already accounted for by their school and gets full, unrestricted
+    // access — this used to also gate any authenticated role==='candidate'
+    // account, which wrongly capped real enrolled students at 5 questions
+    // too. Only the truly external, not-logged-in visitor gets limited now.
+    // Wrapped in its own try/catch, separate from the rest of the route —
+    // this gate is a nice-to-have (monetization), not core functionality.
+    // A failure here used to bubble all the way up and 500 the ENTIRE
+    // question fetch, which is exactly why "Practice Free" was falling back
+    // to demo questions — one gate bug broke the whole endpoint for
+    // everyone, paid or not, anonymous or not.
+    try {
+      if (isAnonymous) {
+        const quotaKey = anonId ? `anon:${anonId}` : null;
+        // No anon id sent at all — can't track this visitor's quota, so
+        // rather than either trusting them unlimited or blocking outright,
+        // fall back to serving normally-limited results with no free-trial
+        // bookkeeping. In practice the client always sends this (see
+        // main.jsx), so this is just a safety fallback, not the expected path.
+        if (quotaKey) {
           const remaining = await getRemainingQuota(db, quotaKey);
           if (remaining <= 0) {
             return res.status(402).json({
-              error: `You've used all ${FREE_QUESTION_LIMIT} free questions. Subscribe to a plan to keep practicing.`,
+              error: `You've used all ${FREE_QUESTION_LIMIT} free questions. Log in or subscribe to keep practicing.`,
               code: 'FREE_LIMIT_REACHED',
               free_limit: FREE_QUESTION_LIMIT,
             });
@@ -190,6 +202,10 @@ router.get('/', optionalAuthenticate, async (req, res) => {
           freeTrial = { remaining_before: remaining, limit: FREE_QUESTION_LIMIT, quotaKey };
         }
       }
+    } catch (gateErr) {
+      console.error('Free-trial gate error (falling through, serving questions normally):', gateErr.message);
+      effectiveLimit = limitNum;
+      freeTrial = null;
     }
 
     let where = 'q.is_active = TRUE';
@@ -237,14 +253,18 @@ router.get('/', optionalAuthenticate, async (req, res) => {
 
     let freeTrialStatus;
     if (freeTrial) {
-      // Only consume quota for what was actually handed back — if fewer
-      // questions matched the filters than the trial had left, no sense
-      // burning unused quota on questions that were never served.
-      const consumed = await consumeQuota(db, freeTrial.quotaKey, questions.length);
-      freeTrialStatus = {
-        limit: freeTrial.limit,
-        remaining: Math.max(0, freeTrial.remaining_before - consumed),
-      };
+      try {
+        // Only consume quota for what was actually handed back — if fewer
+        // questions matched the filters than the trial had left, no sense
+        // burning unused quota on questions that were never served.
+        const consumed = await consumeQuota(db, freeTrial.quotaKey, questions.length);
+        freeTrialStatus = {
+          limit: freeTrial.limit,
+          remaining: Math.max(0, freeTrial.remaining_before - consumed),
+        };
+      } catch (consumeErr) {
+        console.error('Free-trial consume error (questions already fetched, serving anyway):', consumeErr.message);
+      }
     }
 
     res.json({ questions, total, free_trial: freeTrialStatus });
