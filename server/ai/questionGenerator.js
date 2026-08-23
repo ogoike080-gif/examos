@@ -17,33 +17,35 @@ function extractJSON(text) {
     // the vision/generation prompts (see extractQuestionsFromImage, explainAnswer)
     // deliberately asking the model to write LaTeX like \frac{1}{2} or 30^\circ
     // into JSON string values. For that to be valid JSON the model must double
-    // the backslash (\\frac), and it frequently doesn't, especially on
-    // math-dense exam pages — producing exactly this kind of SyntaxError
-    // ("Bad escaped character in JSON at position N"). Double any backslash
-    // that isn't already forming an UNAMBIGUOUS JSON escape and retry once.
+    // the backslash (\\frac), and it frequently gets this only PARTLY right —
+    // a single response can mix correctly-escaped macros (\\frac, \\sqrt) with
+    // broken ones (\propto) side by side, especially on math-dense exam pages.
+    // That mix is exactly why a naive per-backslash regex doesn't work: if you
+    // inspect one backslash at a time, the SECOND backslash of an already-
+    // correct "\\frac" pair looks just like a lone bad backslash (next char is
+    // a letter) and gets "fixed" again, corrupting a correct escape while
+    // trying to repair a broken one nearby, which just moves the SyntaxError
+    // further into the string instead of resolving it.
     //
-    // Deliberately narrower than JSON's full escape set: \b \f \n \r \t are
-    // technically valid JSON escapes, but in this LaTeX-heavy context they are
-    // overwhelmingly more likely to be the first letter of a LaTeX macro
-    // (\beta, \frac, \neq, \r..., \theta/\times/\tan) than a real control
-    // character — leaving them alone silently corrupts math into invisible
-    // control characters instead of throwing, which is worse than a slightly
-    // over-eager repair. Only \" \\ \/ and a genuine \uXXXX are left as-is;
-    // everything else (including b/f/n/r/t) gets escaped. Worst case for a
-    // rare genuine \n is a literal "\n" surviving as visible text instead of
-    // a real line break — a cosmetic downgrade, not corruption.
-    const repaired = clean.replace(/\\(?!["\\/]|u[0-9a-fA-F]{4})/g, '\\\\');
-    // TEMPORARY DEBUG — remove once we've captured one failing sample. Logs the
-    // raw text so we can see exactly what pattern is slipping past the repair.
-    console.error('[extractJSON] first parse failed:', err.message);
-    console.error('[extractJSON] raw text was:', clean);
-    try {
-      return JSON.parse(repaired);
-    } catch (err2) {
-      console.error('[extractJSON] repair also failed:', err2.message);
-      console.error('[extractJSON] repaired text was:', repaired);
-      throw err2;
-    }
+    // Matching whole recognized escape TOKENS first avoids that: `\\\\` (an
+    // already-correct escaped backslash), `\\["\\/]`, and `\\uXXXX` are each
+    // matched and consumed as a single unit and left untouched. Only a
+    // backslash that isn't the start of any of those — the real LaTeX-macro
+    // case — falls through to the bare `\\` alternative and gets doubled.
+    // Deliberately excludes \b \f \n \r \t from the "leave alone" set even
+    // though they're technically valid JSON escapes: in this LaTeX-heavy
+    // context they're overwhelmingly more likely to be the first letter of a
+    // macro (\beta, \frac, \neq, \theta/\times/\tan) than a real control
+    // character, and leaving them alone silently corrupts math into invisible
+    // control characters instead of throwing — worse than a slightly
+    // over-eager repair. Worst case for a rare genuine \n is a literal "\n"
+    // surviving as visible text instead of a real line break — a cosmetic
+    // downgrade, not corruption.
+    const repaired = clean.replace(
+      /\\\\|\\["\\/]|\\u[0-9a-fA-F]{4}|\\/g,
+      (m) => (m === '\\' ? '\\\\' : m)
+    );
+    return JSON.parse(repaired);
   }
 }
 
