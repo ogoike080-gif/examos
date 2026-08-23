@@ -6,7 +6,7 @@
 // just signed up and hasn't picked a plan yet. Anyone on a paid plan skips
 // this check entirely.
 
-const FREE_QUESTION_LIMIT = 10;
+const FREE_QUESTION_LIMIT = 5;
 
 async function ensureTable(db) {
   await db.execute(`

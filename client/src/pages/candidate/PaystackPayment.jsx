@@ -100,7 +100,7 @@ const PLANS = [
 // to satisfy the DB's NOT NULL constraint — it was never meant to be used
 // for anything real, and sending it straight to Paystack is exactly what
 // was producing '"email" must be a valid email'.
-function isRealEmail(email) {
+export function isRealEmail(email) {
   if (!email) return false;
   if (email.endsWith('@ogotech.internal')) return false;
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
