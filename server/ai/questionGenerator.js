@@ -33,7 +33,17 @@ function extractJSON(text) {
     // rare genuine \n is a literal "\n" surviving as visible text instead of
     // a real line break — a cosmetic downgrade, not corruption.
     const repaired = clean.replace(/\\(?!["\\/]|u[0-9a-fA-F]{4})/g, '\\\\');
-    return JSON.parse(repaired);
+    // TEMPORARY DEBUG — remove once we've captured one failing sample. Logs the
+    // raw text so we can see exactly what pattern is slipping past the repair.
+    console.error('[extractJSON] first parse failed:', err.message);
+    console.error('[extractJSON] raw text was:', clean);
+    try {
+      return JSON.parse(repaired);
+    } catch (err2) {
+      console.error('[extractJSON] repair also failed:', err2.message);
+      console.error('[extractJSON] repaired text was:', repaired);
+      throw err2;
+    }
   }
 }
 
