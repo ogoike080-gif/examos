@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { examAPI, questionAPI } from '../../utils/api';
 import Button from '../../components/shared/Button';
+import MathText from '../../components/MathText';
 
 export default function ExamBuilderPage() {
   const { id } = useParams();
@@ -194,7 +195,7 @@ export default function ExamBuilderPage() {
                 }}>
                   <input type="checkbox" checked={sel} readOnly style={{ marginTop:3, width:'auto' }} />
                   <div style={{ flex:1, minWidth:0 }}>
-                    <div style={{ fontSize:13, fontWeight:500, marginBottom:6, lineHeight:1.4 }}>{q.question_text}</div>
+                    <div style={{ fontSize:13, fontWeight:500, marginBottom:6, lineHeight:1.4 }}><MathText text={q.question_text} inline /></div>
                     <div style={{ display:'flex', gap:6, flexWrap:'wrap' }}>
                       <span className={`tag tag-${q.difficulty === 'easy' ? 'green' : q.difficulty === 'hard' ? 'red' : 'amber'}`}>{q.difficulty}</span>
                       <span className="tag tag-gray">{q.question_type}</span>

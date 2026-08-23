@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { questionAPI } from '../../utils/api';
 import Button from '../../components/shared/Button';
+import MathText from '../../components/MathText';
 import styles from './QuestionBankPage.module.css';
 
 const DIFF_COLORS = { easy: 'tag-green', medium: 'tag-amber', hard: 'tag-red' };
@@ -149,12 +150,12 @@ export default function QuestionBankPage() {
                   className={styles.qCheck}
                 />
                 <div className={styles.qContent}>
-                  <div className={styles.qText}>{q.question_text}</div>
+                  <div className={styles.qText}><MathText text={q.question_text} inline /></div>
                   {opts.length > 0 && (
                     <div className={styles.qOpts}>
                       {opts.slice(0,4).map((opt, i) => (
                         <span key={i} className={`${styles.qOpt} ${correct.includes(opt) ? styles.qOptCorrect : ''}`}>
-                          {String.fromCharCode(65+i)}) {opt}
+                          {String.fromCharCode(65+i)}) <MathText text={opt} inline />
                         </span>
                       ))}
                     </div>

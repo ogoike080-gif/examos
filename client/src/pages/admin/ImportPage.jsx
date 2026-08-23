@@ -3,6 +3,7 @@ import axios from 'axios';
 import toast from 'react-hot-toast';
 import { importAPI, subjectAPI, questionAPI } from '../../utils/api';
 import Button from '../../components/shared/Button';
+import MathText from '../../components/MathText';
 import styles from './ImportPage.module.css';
 
 const EXAM_BODIES = ['WAEC', 'JAMB', 'NECO', 'NABTEB', 'BECE', 'Post-UTME', 'General'];
@@ -440,7 +441,7 @@ export default function ImportPage() {
                         <img src={q.image_url || q.media_url} alt="" style={{ width: 32, height: 32, objectFit: 'cover', borderRadius: 4 }} title="Has image" />
                       )}
                     </td>
-                    <td className={styles.qCell}>{q.question_text}</td>
+                    <td className={styles.qCell}><MathText text={q.question_text} inline /></td>
                     <td className={styles.optsCell}>
                       {(q.options || []).map((opt, oi) => (
                         <span
@@ -450,7 +451,7 @@ export default function ImportPage() {
                           style={{ cursor: 'pointer' }}
                           title="Click to mark as correct answer"
                         >
-                          {String.fromCharCode(65 + oi)}) {opt.slice(0, 30)}{opt.length > 30 ? '…' : ''}
+                          {String.fromCharCode(65 + oi)}) <MathText text={opt.slice(0, 30)} inline />{opt.length > 30 ? '…' : ''}
                         </span>
                       ))}
                     </td>
