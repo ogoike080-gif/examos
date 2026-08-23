@@ -223,12 +223,23 @@ export default function ImportBatchReviewPage() {
     }
   };
 
+  const [quickVerifyingId, setQuickVerifyingId] = useState(null);
+
   const quickVerify = async (rowId) => {
+    setQuickVerifyingId(rowId);
     try {
-      await importBatchAPI.updateStaged(id, rowId, { review_status: 'verified' });
-      toast.success('Marked verified');
+      const res = await importBatchAPI.quickVerify(id, rowId);
+      toast.success(
+        res.data.auto_solved
+          ? `Answer AI-solved (${(res.data.correct_answers || [])[0] || '—'}) and marked verified`
+          : 'Marked verified'
+      );
       load();
-    } catch { toast.error('Could not update status'); }
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Could not verify this question');
+    } finally {
+      setQuickVerifyingId(null);
+    }
   };
 
   const reject = async (rowId) => {
@@ -413,7 +424,10 @@ export default function ImportBatchReviewPage() {
                 {!isEditing && (
                   <div style={{ display: 'flex', gap: 8 }}>
                     {row.review_status !== 'verified' && (
-                      <button onClick={() => quickVerify(row.id)} style={{ ...btnS(false), color: 'var(--success)' }}>Quick Verify</button>
+                      <button onClick={() => quickVerify(row.id)} disabled={quickVerifyingId === row.id}
+                        style={{ ...btnS(false), color: 'var(--success)' }}>
+                        {quickVerifyingId === row.id ? 'Verifying…' : 'Quick Verify'}
+                      </button>
                     )}
                     <button onClick={() => openTopicPicker(row.id)} style={{ ...btnS(false), color: row.topic_id ? 'var(--success)' : 'var(--text-secondary)' }}>
                       {row.topic_id ? '✓ Topic' : '+ Topic'}

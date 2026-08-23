@@ -592,6 +592,74 @@ router.put('/:id/staged/:stagedId', authenticate, authorize('superadmin', 'admin
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// POST /api/import/batches/:id/staged/:stagedId/quick-verify — the review
+// screen's "Quick Verify" button. Previously this just flipped review_status
+// to 'verified' as-is — which meant a question with no recorded correct
+// answer (like the "Notes: no correct answer set" case) could be marked
+// verified and then published with nothing to score against. Now, if the
+// row is an MCQ still missing an answer, this has the AI solve it first
+// (same solver used by bulk "AI-Solve Missing Answers"), records the result
+// as AI-derived in review_notes so it's clear where the answer came from,
+// and only then marks it verified — all in the one click, no separate step.
+router.post('/:id/staged/:stagedId/quick-verify', authenticate, authorize('superadmin', 'admin', 'examiner'), async (req, res) => {
+  try {
+    const db = getDB();
+    const [rows] = await db.execute(
+      `SELECT id, question_text, options, correct_answers, question_type, review_notes
+       FROM staged_questions WHERE id=? AND import_batch_id=?`,
+      [req.params.stagedId, req.params.id]
+    );
+    const row = rows[0];
+    if (!row) return res.status(404).json({ error: 'Staged question not found' });
+
+    let options;
+    try { options = Array.isArray(row.options) ? row.options : JSON.parse(row.options || '[]'); } catch { options = []; }
+    let correctAnswers;
+    try { correctAnswers = Array.isArray(row.correct_answers) ? row.correct_answers : JSON.parse(row.correct_answers || '[]'); } catch { correctAnswers = []; }
+
+    let autoSolved = false;
+    if (!correctAnswers.length && row.question_type === 'mcq' && options.length) {
+      const [batchRows] = await db.execute('SELECT subject_id FROM import_batches WHERE id=?', [req.params.id]);
+      let subjectName = null;
+      if (batchRows[0]?.subject_id) {
+        const [s] = await db.execute('SELECT name FROM subjects WHERE id=?', [batchRows[0].subject_id]);
+        subjectName = s[0]?.name || null;
+      }
+
+      const result = await solveObjectiveQuestion({ question_text: row.question_text, options, subject: subjectName });
+      if (result.solvable && result.correct_answer_letter && options[result.correct_answer_letter.charCodeAt(0) - 65]) {
+        correctAnswers = [options[result.correct_answer_letter.charCodeAt(0) - 65]];
+        autoSolved = true;
+        const note = `AI-derived answer (${result.confidence || 'unknown'} confidence) — computed at Quick Verify, not from an official answer key.`;
+        await db.execute(
+          `UPDATE staged_questions SET correct_answers=?, explanation=COALESCE(NULLIF(explanation,''), ?),
+           review_notes = CONCAT(COALESCE(review_notes, ''), IF(review_notes IS NULL OR review_notes = '', '', '; '), ?)
+           WHERE id=?`,
+          [JSON.stringify(correctAnswers), result.solution_steps || null, note, row.id]
+        );
+      }
+    }
+
+    // Whether or not there was anything to solve, Quick Verify always ends
+    // with the row marked verified — matching its previous one-click
+    // behaviour for rows that already had an answer.
+    await db.execute(
+      `UPDATE staged_questions SET review_status='verified', reviewed_by=?, reviewed_at=NOW() WHERE id=? AND import_batch_id=?`,
+      [req.user.id, req.params.stagedId, req.params.id]
+    );
+    await recomputeBatchCounts(db, req.params.id);
+
+    res.json({
+      message: autoSolved ? 'Answer AI-solved and marked verified' : 'Marked verified',
+      auto_solved: autoSolved,
+      correct_answers: correctAnswers,
+    });
+  } catch (err) {
+    console.error('quick-verify error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // POST /:id/staged/:stagedId/reconstruct-diagram — generates a candidate SVG
 // reconstruction of the question's diagram photo, WITHOUT saving anything.
 // The admin reviews the result (svg + elements_description + confidence)

@@ -154,6 +154,7 @@ export const importBatchAPI = {
   get: (id) => axios.get(`${API}/import/batches/${id}`),
   staged: (id, status) => axios.get(`${API}/import/batches/${id}/staged`, { params: status ? { status } : {} }),
   updateStaged: (id, stagedId, data) => axios.put(`${API}/import/batches/${id}/staged/${stagedId}`, data),
+  quickVerify: (id, stagedId) => axios.post(`${API}/import/batches/${id}/staged/${stagedId}/quick-verify`, {}, { timeout: 60000 }),
   publish: (id) => axios.post(`${API}/import/batches/${id}/publish`),
   cancel: (id) => axios.delete(`${API}/import/batches/${id}`),
   pages: (id) => axios.get(`${API}/import/batches/${id}/pages`),
