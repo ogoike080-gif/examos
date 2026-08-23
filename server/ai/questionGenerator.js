@@ -17,34 +17,22 @@ function extractJSON(text) {
     // the vision/generation prompts (see extractQuestionsFromImage, explainAnswer)
     // deliberately asking the model to write LaTeX like \frac{1}{2} or 30^\circ
     // into JSON string values. For that to be valid JSON the model must double
-    // the backslash (\\frac), and it frequently gets this only PARTLY right —
-    // a single response can mix correctly-escaped macros (\\frac, \\sqrt) with
-    // broken ones (\propto) side by side, especially on math-dense exam pages.
-    // That mix is exactly why a naive per-backslash regex doesn't work: if you
-    // inspect one backslash at a time, the SECOND backslash of an already-
-    // correct "\\frac" pair looks just like a lone bad backslash (next char is
-    // a letter) and gets "fixed" again, corrupting a correct escape while
-    // trying to repair a broken one nearby, which just moves the SyntaxError
-    // further into the string instead of resolving it.
+    // the backslash (\\frac), and it frequently doesn't, especially on
+    // math-dense exam pages — producing exactly this kind of SyntaxError
+    // ("Bad escaped character in JSON at position N"). Double any backslash
+    // that isn't already forming an UNAMBIGUOUS JSON escape and retry once.
     //
-    // Matching whole recognized escape TOKENS first avoids that: `\\\\` (an
-    // already-correct escaped backslash), `\\["\\/]`, and `\\uXXXX` are each
-    // matched and consumed as a single unit and left untouched. Only a
-    // backslash that isn't the start of any of those — the real LaTeX-macro
-    // case — falls through to the bare `\\` alternative and gets doubled.
-    // Deliberately excludes \b \f \n \r \t from the "leave alone" set even
-    // though they're technically valid JSON escapes: in this LaTeX-heavy
-    // context they're overwhelmingly more likely to be the first letter of a
-    // macro (\beta, \frac, \neq, \theta/\times/\tan) than a real control
-    // character, and leaving them alone silently corrupts math into invisible
-    // control characters instead of throwing — worse than a slightly
-    // over-eager repair. Worst case for a rare genuine \n is a literal "\n"
-    // surviving as visible text instead of a real line break — a cosmetic
-    // downgrade, not corruption.
-    const repaired = clean.replace(
-      /\\\\|\\["\\/]|\\u[0-9a-fA-F]{4}|\\/g,
-      (m) => (m === '\\' ? '\\\\' : m)
-    );
+    // Deliberately narrower than JSON's full escape set: \b \f \n \r \t are
+    // technically valid JSON escapes, but in this LaTeX-heavy context they are
+    // overwhelmingly more likely to be the first letter of a LaTeX macro
+    // (\beta, \frac, \neq, \r..., \theta/\times/\tan) than a real control
+    // character — leaving them alone silently corrupts math into invisible
+    // control characters instead of throwing, which is worse than a slightly
+    // over-eager repair. Only \" \\ \/ and a genuine \uXXXX are left as-is;
+    // everything else (including b/f/n/r/t) gets escaped. Worst case for a
+    // rare genuine \n is a literal "\n" surviving as visible text instead of
+    // a real line break — a cosmetic downgrade, not corruption.
+    const repaired = clean.replace(/\\(?!["\\/]|u[0-9a-fA-F]{4})/g, '\\\\');
     return JSON.parse(repaired);
   }
 }
@@ -532,13 +520,19 @@ async function explainAnswer({ question_text, options, correct_answers, subject,
   const isEssayLike = question_type === 'essay' || (!options?.length && correctList.length === 0);
 
   const prompt = isEssayLike
-    ? `You are an experienced ${subject || ''} exam tutor. A student just answered this essay/theory question and wants guidance on how a strong answer is built.
+    ? `You are an experienced ${subject || ''} exam tutor. A student just attempted this theory/essay question and wants a model answer to study from.
 
 Question: ${question_text}
 
-There is no single fixed correct answer to check against — instead, explain the reasoning and structure a strong answer would follow: the key points/steps a student should cover, and why each matters. Suitable for a West African secondary school student preparing for WAEC/JAMB/NECO. Keep it focused: a few sentences to a short paragraph, not an essay.
+This question may have multiple lettered parts — e.g. (a), (b), (c) — possibly itself further broken into (i), (ii). Address EVERY part, in the same order and using the same labels the question uses.
 
-Write any mathematical content as LaTeX wrapped in single dollar signs, e.g. $x^2 + 3x - 4 = 0$, $\\frac{1}{2}$, $30^\\circ$ — this gets rendered with a real math typesetting engine, so don't convert it to Unicode or plain text yourself.
+For any part that requires calculation: show the actual worked steps (not just a description of the method) and state the final numeric/algebraic answer clearly at the end of that part — exactly as a student would need to write it out for full marks, not a summary of the approach.
+
+For any part that is genuinely open-ended/descriptive (no single correct answer, e.g. discuss, explain, describe): give a strong, well-structured model answer covering the key points an examiner would look for.
+
+Suitable for a West African secondary school student preparing for WAEC/JAMB/NECO. Be complete but not padded — cover every part fully, without unnecessary repetition.
+
+Write any mathematical content as LaTeX wrapped in single dollar signs, e.g. $x^2 + 3x - 4 = 0$, $\\frac{1}{2}$, $30^\\circ$ — this gets rendered with a real math typesetting engine, so don't convert it to Unicode or plain text yourself. Put each lettered part on its own line.
 
 Respond in JSON only (no markdown, no backticks):
 {
