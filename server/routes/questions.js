@@ -211,6 +211,18 @@ router.get('/', optionalAuthenticate, async (req, res) => {
     let where = 'q.is_active = TRUE';
     const params = [];
 
+    // Practice Free (the anonymous, no-account flow) must be strictly
+    // objective — theory/essay questions can't be auto-graded or explained
+    // the same instant way objective ones can, so they don't belong in a
+    // quick unauthenticated trial. This overrides any `type=essay` a client
+    // might pass, rather than just being the default when no type filter is
+    // given — an anonymous request is never allowed to pull essay questions,
+    // full stop. Enrolled candidates who actually log in are unaffected —
+    // they get every question type, this only narrows the anonymous path.
+    if (isAnonymous) {
+      where += " AND q.question_type != 'essay'";
+    }
+
     if (subject_id) { where += ' AND q.subject_id = ?'; params.push(subject_id); }
     if (subject && subject !== 'All') { where += ' AND s.name = ?'; params.push(subject); }
     if (difficulty)  { where += ' AND q.difficulty = ?';  params.push(difficulty); }
@@ -235,13 +247,18 @@ router.get('/', optionalAuthenticate, async (req, res) => {
     // Numbered questions (imported with a known printed question number) sort
     // in that original order first; anything without a number (older manual
     // entries, AI-generated questions) falls back to newest-first after them.
+    // Objective questions sort before theory/essay ones (matching the usual
+    // WAEC/NECO/JAMB paper convention — Section A objective 1–50, Section B
+    // theory below/after) — otherwise interleaved question_numbers from
+    // different sections (each often restarting at 1) could mix them
+    // together instead of keeping objective first, theory after.
     const [questions] = await db.execute(
       `SELECT q.*, s.name as subject_name, u.full_name as created_by_name
        FROM questions q
        LEFT JOIN subjects s ON q.subject_id = s.id
        LEFT JOIN users u ON q.created_by = u.id
        WHERE ${where}
-       ORDER BY (q.question_number IS NULL) ASC, q.question_number ASC, q.created_at DESC
+       ORDER BY (q.question_type = 'essay') ASC, (q.question_number IS NULL) ASC, q.question_number ASC, q.created_at DESC
        LIMIT ${effectiveLimit} OFFSET ${offsetNum}`,
       params
     );
