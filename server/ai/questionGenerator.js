@@ -10,29 +10,106 @@ const VISION_MODEL = 'gemini-3.5-flash';
 
 function extractJSON(text) {
   const clean = text.trim().replace(/```json|```/g, '').trim();
-  return JSON.parse(clean);
+  try {
+    return JSON.parse(clean);
+  } catch (err) {
+    // The most common failure here isn't a genuinely malformed response — it's
+    // the vision/generation prompts (see extractQuestionsFromImage, explainAnswer)
+    // deliberately asking the model to write LaTeX like \frac{1}{2} or 30^\circ
+    // into JSON string values. For that to be valid JSON the model must double
+    // the backslash (\\frac), and it frequently gets this only PARTLY right —
+    // a single response can mix correctly-escaped macros (\\frac, \\sqrt) with
+    // broken ones (\propto) side by side, especially on math-dense exam pages.
+    // That mix is exactly why a naive per-backslash regex doesn't work: if you
+    // inspect one backslash at a time, the SECOND backslash of an already-
+    // correct "\\frac" pair looks just like a lone bad backslash (next char is
+    // a letter) and gets "fixed" again, corrupting a correct escape while
+    // trying to repair a broken one nearby, which just moves the SyntaxError
+    // further into the string instead of resolving it.
+    //
+    // Matching whole recognized escape TOKENS first avoids that: `\\\\` (an
+    // already-correct escaped backslash), `\\["\\/]`, and `\\uXXXX` are each
+    // matched and consumed as a single unit and left untouched. Only a
+    // backslash that isn't the start of any of those — the real LaTeX-macro
+    // case — falls through to the bare `\\` alternative and gets doubled.
+    // Deliberately excludes \b \f \n \r \t from the "leave alone" set even
+    // though they're technically valid JSON escapes: in this LaTeX-heavy
+    // context they're overwhelmingly more likely to be the first letter of a
+    // macro (\beta, \frac, \neq, \theta/\times/\tan) than a real control
+    // character, and leaving them alone silently corrupts math into invisible
+    // control characters instead of throwing — worse than a slightly
+    // over-eager repair. Worst case for a rare genuine \n is a literal "\n"
+    // surviving as visible text instead of a real line break — a cosmetic
+    // downgrade, not corruption.
+    const repaired = clean.replace(
+      /\\\\|\\["\\/]|\\u[0-9a-fA-F]{4}|\\/g,
+      (m) => (m === '\\' ? '\\\\' : m)
+    );
+    return JSON.parse(repaired);
+  }
 }
 
-// Gemini's free-tier quota error comes back as a wall of nested JSON — that's
-// what was showing up verbatim in the admin's "Pages Needing Attention" list
-// instead of something readable. This recognizes that specific error shape
-// (RESOURCE_EXHAUSTED / HTTP 429) and turns it into one clear sentence, and
-// pulls out the retryDelay Gemini itself suggests, if present, so the admin
-// knows roughly how long to wait before hitting Retry Page again.
+/**
+ * Normalizes whatever the @google/genai SDK throws into a consistent, plain
+ * shape — { message, isQuotaExceeded, retryDelaySeconds } — so callers never
+ * need to know Google's raw error format to handle a rate-limit sanely.
+ *
+ * The SDK doesn't throw a typed error with clean fields; it throws an Error
+ * whose .message is often the ENTIRE upstream HTTP error body serialized as
+ * text (sometimes JSON, sometimes JSON embedded after a "got status" prefix).
+ * For a 429 that body looks roughly like:
+ *   { "error": { "code": 429, "status": "RESOURCE_EXHAUSTED", "message": "...",
+ *       "details": [ ..., { "@type": ".../RetryInfo", "retryDelay": "41s" } ] } }
+ * This digs the useful bits out of that without assuming it's always present
+ * in exactly that shape — free-tier limits, error formats, and model names
+ * are all things Google changes without notice.
+ */
 function parseGeminiError(err) {
-  const raw = err?.message || String(err);
-  const isQuotaExceeded = raw.includes('RESOURCE_EXHAUSTED') || raw.includes('"code":429') || raw.includes('status: 429');
-  if (!isQuotaExceeded) return { isQuotaExceeded: false, message: raw };
+  const rawMessage = err?.message || String(err || 'Unknown AI error');
 
+  // The JSON body, if the SDK included one, is usually the last `{...}` block
+  // in the message. Pull it out defensively — if this fails for any reason,
+  // fall through to the plain-text heuristics below instead of throwing.
+  let parsedBody = null;
+  const jsonMatch = rawMessage.match(/\{[\s\S]*\}/);
+  if (jsonMatch) {
+    try { parsedBody = JSON.parse(jsonMatch[0]); } catch { /* not JSON — fine */ }
+  }
+
+  const apiError = parsedBody?.error;
+  const code = apiError?.code ?? err?.status ?? err?.code;
+  const status = apiError?.status ?? err?.status;
+
+  const isQuotaExceeded =
+    code === 429 ||
+    status === 'RESOURCE_EXHAUSTED' ||
+    /RESOURCE_EXHAUSTED|quota/i.test(rawMessage);
+
+  if (!isQuotaExceeded) {
+    // Not a quota error — pass through a short, human-readable version rather
+    // than dumping the full raw SDK error (which can be a huge nested JSON
+    // blob) into a UI toast or a stored error_message column.
+    const shortMessage = (apiError?.message || rawMessage).slice(0, 300);
+    return { message: shortMessage, isQuotaExceeded: false, retryDelaySeconds: null };
+  }
+
+  // Look for Google's RetryInfo detail block: { "@type": ".../RetryInfo",
+  // "retryDelay": "41s" }. Fall back to scanning the raw text for a bare
+  // "41s"-style token if the structured details aren't present for some
+  // reason (e.g. a different error shape than expected).
   let retryDelaySeconds = null;
-  const delayMatch = raw.match(/"retryDelay"\s*:\s*"(\d+)s"/);
-  if (delayMatch) retryDelaySeconds = parseInt(delayMatch[1], 10);
+  const retryDetail = apiError?.details?.find(d => typeof d['@type'] === 'string' && d['@type'].includes('RetryInfo'));
+  const retryDelayStr = retryDetail?.retryDelay || rawMessage.match(/retryDelay["']?\s*[:=]\s*["']?(\d+)s/)?.[1];
+  if (retryDelayStr) {
+    const n = parseInt(retryDelayStr, 10);
+    if (!Number.isNaN(n)) retryDelaySeconds = n;
+  }
 
   const message = retryDelaySeconds
     ? `Gemini API free-tier daily quota exceeded. Try again in about ${retryDelaySeconds} seconds, or upgrade to a paid Gemini API plan for higher limits.`
-    : `Gemini API free-tier daily quota exceeded. Try again later, or upgrade to a paid Gemini API plan for higher limits.`;
+    : `Gemini API free-tier daily quota exceeded. Try again shortly, or upgrade to a paid Gemini API plan for higher limits.`;
 
-  return { isQuotaExceeded: true, retryDelaySeconds, message };
+  return { message, isQuotaExceeded: true, retryDelaySeconds };
 }
 
 /**
@@ -277,21 +354,6 @@ Rules:
       ],
     });
   } catch (visionErr) {
-    const geminiErr = parseGeminiError(visionErr);
-    if (geminiErr.isQuotaExceeded) {
-      // Both models share the same account-level free-tier quota — falling
-      // back to the lite model here would just burn a second guaranteed-
-      // to-fail request against an already-exhausted quota (this is exactly
-      // what was happening: the raw RESOURCE_EXHAUSTED JSON showing up
-      // verbatim in the admin's "Pages Needing Attention" list was actually
-      // the *second* failure, from the fallback model, after the first one
-      // already failed for the same reason). Fail fast with one clean,
-      // actionable message instead.
-      const cleanErr = new Error(geminiErr.message);
-      cleanErr.isQuotaExceeded = true;
-      cleanErr.retryDelaySeconds = geminiErr.retryDelaySeconds;
-      throw cleanErr;
-    }
     // Rate-limited or the model name changed again (Google retires these fast) —
     // fall back to the lite model rather than failing the whole page read.
     console.error(`Vision model (${VISION_MODEL}) failed, falling back to ${MODEL}:`, visionErr.message);
@@ -309,14 +371,15 @@ Rules:
         ],
       });
     } catch (fallbackErr) {
-      const fallbackGeminiErr = parseGeminiError(fallbackErr);
-      if (fallbackGeminiErr.isQuotaExceeded) {
-        const cleanErr = new Error(fallbackGeminiErr.message);
-        cleanErr.isQuotaExceeded = true;
-        cleanErr.retryDelaySeconds = fallbackGeminiErr.retryDelaySeconds;
-        throw cleanErr;
-      }
-      throw fallbackErr;
+      // Both models failed — in practice this almost always means the whole
+      // Gemini account (not just one model) has hit its free-tier daily
+      // quota, since the two models don't normally fail for the same reason
+      // at the same time otherwise. Tag the thrown error so callers (the
+      // batch import loop, the single-page retry route in importBatches.js)
+      // can detect this specifically and short-circuit remaining pages
+      // instead of retrying each one and hitting the same wall.
+      const { message, isQuotaExceeded, retryDelaySeconds } = parseGeminiError(fallbackErr);
+      throw Object.assign(new Error(message), { isQuotaExceeded, retryDelaySeconds });
     }
   }
 
@@ -544,13 +607,19 @@ async function explainAnswer({ question_text, options, correct_answers, subject,
   const isEssayLike = question_type === 'essay' || (!options?.length && correctList.length === 0);
 
   const prompt = isEssayLike
-    ? `You are an experienced ${subject || ''} exam tutor. A student just answered this essay/theory question and wants guidance on how a strong answer is built.
+    ? `You are an experienced ${subject || ''} exam tutor. A student just attempted this theory/essay question and wants a model answer to study from.
 
 Question: ${question_text}
 
-There is no single fixed correct answer to check against — instead, explain the reasoning and structure a strong answer would follow: the key points/steps a student should cover, and why each matters. Suitable for a West African secondary school student preparing for WAEC/JAMB/NECO. Keep it focused: a few sentences to a short paragraph, not an essay.
+This question may have multiple lettered parts — e.g. (a), (b), (c) — possibly itself further broken into (i), (ii). Address EVERY part, in the same order and using the same labels the question uses.
 
-Write any mathematical content as LaTeX wrapped in single dollar signs, e.g. $x^2 + 3x - 4 = 0$, $\\frac{1}{2}$, $30^\\circ$ — this gets rendered with a real math typesetting engine, so don't convert it to Unicode or plain text yourself.
+For any part that requires calculation: show the actual worked steps (not just a description of the method) and state the final numeric/algebraic answer clearly at the end of that part — exactly as a student would need to write it out for full marks, not a summary of the approach.
+
+For any part that is genuinely open-ended/descriptive (no single correct answer, e.g. discuss, explain, describe): give a strong, well-structured model answer covering the key points an examiner would look for.
+
+Suitable for a West African secondary school student preparing for WAEC/JAMB/NECO. Be complete but not padded — cover every part fully, without unnecessary repetition.
+
+Write any mathematical content as LaTeX wrapped in single dollar signs, e.g. $x^2 + 3x - 4 = 0$, $\\frac{1}{2}$, $30^\\circ$ — this gets rendered with a real math typesetting engine, so don't convert it to Unicode or plain text yourself. Put each lettered part on its own line.
 
 Respond in JSON only (no markdown, no backticks):
 {
@@ -574,19 +643,6 @@ Respond in JSON only (no markdown, no backticks):
   "explanation": "..."
 }`;
 
-  // Explanation generation shares the exact same Gemini account/quota as
-  // everything else (question extraction, essay grading, chat) — so once
-  // that daily free-tier quota is exhausted anywhere, EVERY explanation
-  // call fails too, regardless of how simple the question is. Previously
-  // this retried blindly 3 times against a guaranteed-exhausted quota, then
-  // swallowed the failure and returned '' — which the caller (routes/
-  // questions.js) turned into a fake-successful 200 response with an empty
-  // explanation, and the UI showed "No explanation available for this
-  // question yet" as if that question specifically couldn't be explained.
-  // That's what looked like "skipping explanations on many/easy questions"
-  // — it was never about the question, it was quota exhaustion being
-  // silently absorbed. Now: detect it immediately, skip the pointless
-  // retry loop, and throw a real error the route can surface properly.
   let lastErr;
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
@@ -595,19 +651,12 @@ Respond in JSON only (no markdown, no backticks):
       if (result.explanation) return result.explanation;
       lastErr = new Error('AI returned no explanation field');
     } catch (err) {
-      const geminiErr = parseGeminiError(err);
-      if (geminiErr.isQuotaExceeded) {
-        const cleanErr = new Error(geminiErr.message);
-        cleanErr.isQuotaExceeded = true;
-        cleanErr.retryDelaySeconds = geminiErr.retryDelaySeconds;
-        throw cleanErr; // don't burn remaining attempts against the same exhausted quota
-      }
       lastErr = err;
     }
     if (attempt < 3) await new Promise(r => setTimeout(r, 800 * attempt));
   }
   console.error('explainAnswer failed after retries:', lastErr?.message);
-  throw lastErr || new Error('Failed to generate explanation');
+  return '';
 }
 
 /**
