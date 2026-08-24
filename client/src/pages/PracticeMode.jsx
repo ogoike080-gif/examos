@@ -499,9 +499,21 @@ function PracticeEngine({ config, onFinish }) {
       // block via the 402 the global axios interceptor catches, since those
       // aren't meant to let someone quietly run out mid-timed-session.
       if (config.mode === 'practice' && res.data.free_trial) setFreeTrial(res.data.free_trial);
-    } catch {
-      // Demo questions if API fails or no questions found
-      setQuestions(generateDemoQuestions(config.subject, config.count));
+    } catch (err) {
+      // Quota already exhausted before this session even started (e.g. this
+      // browser used its 5 free questions in an earlier visit) — show the
+      // paywall directly instead of quietly loading demo questions, which
+      // would let them "practice" on fake content with no real path to
+      // upgrade. This is the in-page equivalent of what a global redirect
+      // used to try to do (and broke — see main.jsx for why that's gone).
+      if (err.response?.status === 402 && err.response?.data?.code === 'FREE_LIMIT_REACHED') {
+        setFreeTrial({ remaining: 0, limit: err.response.data.free_limit || 5 });
+        setShowPaywall(true);
+        setQuestions([]);
+      } else {
+        // Demo questions if API fails or no questions found
+        setQuestions(generateDemoQuestions(config.subject, config.count));
+      }
     } finally { setLoading(false); }
   };
 
@@ -556,6 +568,18 @@ function PracticeEngine({ config, onFinish }) {
       <p style={{ color:'var(--text-muted)' }}>Loading {config.count} questions...</p>
     </div>
   );
+
+  // Quota was already exhausted before this session could even start (see
+  // loadQuestions' catch block above) — nothing to practice on, so show
+  // just the paywall rather than rendering the question engine against an
+  // empty question list.
+  if (!loading && questions.length === 0 && showPaywall) {
+    return (
+      <div style={{ minHeight:'100dvh', background:'var(--bg-base)' }}>
+        <FreeTrialPaywall onDismiss={() => window.history.back()} />
+      </div>
+    );
+  }
 
   const q = questions[current];
   if (!q) return null;

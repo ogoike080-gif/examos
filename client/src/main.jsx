@@ -31,12 +31,21 @@ function restoreToken() {
 
 restoreToken();
 
-// Intercept every response — on 401, clear session and go to login. On 402
-// with code FREE_LIMIT_REACHED, the candidate has used all 10 free trial
-// questions (see routes/questions.js) — send them to the pricing page
-// instead of letting whichever screen they were on show an empty/broken
-// state. Handled globally here so every page that fetches questions
-// (Practice Mode, Study Mode, Topic practice) gets this for free.
+// Intercept every response — on 401, clear session and go to login.
+//
+// 402 FREE_LIMIT_REACHED (an anonymous "Practice Free" visitor, or an old
+// pre-quota session, has used up their 5 free questions — see
+// routes/questions.js) is deliberately NOT handled here. It used to
+// redirect to /exam/billing, but that route requires a logged-in candidate
+// (see App.jsx's <RequireAuth> wrapper around /exam/*) — so an anonymous
+// visitor hitting this got bounced again, straight to /login, which is
+// exactly the "why did Practice Free just send me to the student login
+// page" bug. It also fought with the in-page paywall PracticeMode.jsx and
+// StudyApp.jsx already show for this exact situation (see FreeTrialPaywall)
+// — a full navigation and an in-page modal both trying to react to the same
+// 402 at once. Each of those pages now handles this 402 itself, right where
+// the request was made, instead of a global redirect trying to guess where
+// to send every possible caller.
 axios.interceptors.response.use(
   (res) => res,
   (error) => {
@@ -47,11 +56,6 @@ axios.interceptors.response.use(
         localStorage.removeItem('examos-auth');
         delete axios.defaults.headers.common['Authorization'];
         window.location.href = '/login';
-      }
-    }
-    if (error.response?.status === 402 && error.response?.data?.code === 'FREE_LIMIT_REACHED') {
-      if (!window.location.pathname.startsWith('/exam/billing')) {
-        window.location.href = '/exam/billing?trial_ended=true';
       }
     }
     return Promise.reject(error);

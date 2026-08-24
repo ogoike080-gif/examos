@@ -491,14 +491,26 @@ function ExamScreen({ config, onFinish }) {
       if (config.shuffle) qs = qs.sort(() => Math.random() - 0.5);
       setQuestions(qs.slice(0, config.count));
       if (res.data.free_trial) setFreeTrial(res.data.free_trial);
-    } catch {
-      // Network call failed even though navigator.onLine said true (flaky connection) — fall back to cache
-      const cached = readOfflineCache(cacheKey);
-      if (cached?.length) {
-        setQuestions(cached.slice(0, config.count));
-        setUsingOfflineCache(true);
+    } catch (err) {
+      // Quota already exhausted before this session could even start (e.g.
+      // this browser used its 5 free questions in an earlier visit) — show
+      // the paywall directly instead of quietly loading demo/cached
+      // questions, which would let them "practice" with no real path to
+      // upgrade. This is the in-page equivalent of what a global redirect
+      // used to try to do (and broke — see main.jsx for why that's gone).
+      if (err.response?.status === 402 && err.response?.data?.code === 'FREE_LIMIT_REACHED') {
+        setFreeTrial({ remaining: 0, limit: err.response.data.free_limit || 5 });
+        setShowPaywall(true);
+        setQuestions([]);
       } else {
-        setQuestions(makeDemoQuestions(config.subject, config.count));
+        // Network call failed even though navigator.onLine said true (flaky connection) — fall back to cache
+        const cached = readOfflineCache(cacheKey);
+        if (cached?.length) {
+          setQuestions(cached.slice(0, config.count));
+          setUsingOfflineCache(true);
+        } else {
+          setQuestions(makeDemoQuestions(config.subject, config.count));
+        }
       }
     } finally { setLoading(false); }
   };
@@ -545,6 +557,17 @@ function ExamScreen({ config, onFinish }) {
       <p style={{ color: isMobile ? 'rgba(255,255,255,0.7)' : '#64748B', fontFamily:"'Inter',sans-serif" }}>Loading {config.count} questions...</p>
     </div>
   );
+
+  // Quota was already exhausted before this session could even start (see
+  // loadQuestions' catch block above) — nothing to practice on, so show
+  // just the paywall rather than the question engine against an empty list.
+  if (questions.length === 0 && showPaywall) {
+    return (
+      <div style={{ minHeight:'100dvh', background: isMobile ? '#0F172A' : '#F0F4F8' }}>
+        <FreeTrialPaywall onDismiss={() => window.history.back()} />
+      </div>
+    );
+  }
 
   const q = questions[current];
   if (!q) return null;
