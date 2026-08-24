@@ -69,6 +69,56 @@ export default function QuestionBankPage() {
     load();
   };
 
+  // Explanations are generated once and stored on the question row (see
+  // routes/questions.js) — but for a long time that only happened lazily,
+  // the first time some student happened to open a question. Anything never
+  // opened just sat there with no explanation, however simple it was. This
+  // runs the batch backfill endpoint on a loop until every question in the
+  // bank that's missing one has it, or the AI provider's daily quota runs
+  // out (in which case it stops cleanly and can just be run again later —
+  // it always picks up wherever it left off, nothing is lost or repeated).
+  const [backfilling, setBackfilling] = useState(false);
+  const [backfillProgress, setBackfillProgress] = useState(null); // { generated, remaining }
+
+  const runBackfill = async () => {
+    setBackfilling(true);
+    let totalGenerated = 0;
+    try {
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        const res = await questionAPI.backfillExplanations({ limit: 15 });
+        const { generated, remaining, quota_exceeded, retry_delay_seconds } = res.data;
+        totalGenerated += generated;
+        setBackfillProgress({ generated: totalGenerated, remaining });
+
+        if (quota_exceeded) {
+          toast(
+            `Generated ${totalGenerated} explanation(s). AI quota reached — ${remaining} question(s) still need one; run this again ${retry_delay_seconds ? `in about ${retry_delay_seconds}s` : 'later'}.`,
+            { icon: '⏳', duration: 8000 }
+          );
+          break;
+        }
+        if (remaining === 0) {
+          toast.success(`Done — every question in the bank now has an explanation (${totalGenerated} generated this run).`);
+          break;
+        }
+        if (generated === 0) {
+          // Nothing generated and not quota-exceeded — every remaining
+          // question in this filtered set is one explainAnswer can't
+          // handle (e.g. missing a correct answer), not a transient issue.
+          // Stop rather than looping forever on the same unfixable set.
+          toast(`Stopped — ${remaining} question(s) couldn't be explained (likely missing a recorded correct answer). Fix those in Question Bank, then run this again.`, { icon: '⚠️', duration: 8000 });
+          break;
+        }
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Backfill failed');
+    } finally {
+      setBackfilling(false);
+      load();
+    }
+  };
+
   return (
     <div className={styles.page}>
       <div className={styles.header}>
@@ -82,6 +132,11 @@ export default function QuestionBankPage() {
               Delete {selected.size} selected
             </Button>
           )}
+          <Button variant="ghost" onClick={runBackfill} disabled={backfilling}>
+            {backfilling
+              ? `⏳ Generating… ${backfillProgress ? `(${backfillProgress.generated} done, ${backfillProgress.remaining} left)` : ''}`
+              : '💡 Generate Missing Explanations'}
+          </Button>
           <Button variant="ghost" onClick={() => navigate('/admin/questions/new')}>
             ✦ AI Generate
           </Button>

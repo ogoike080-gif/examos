@@ -495,6 +495,82 @@ router.post('/:id/generate-explanation', optionalAuthenticate, async (req, res) 
   }
 });
 
+// POST /api/questions/backfill-explanations — proactively generates
+// explanations for every published question that's missing one, instead of
+// waiting for a student to happen to view it first (the old lazy-generate-
+// on-reveal approach). Two things this fixes:
+//   1. "No matter how simple" coverage — a question nobody's ever opened
+//      yet had no explanation until someone did, however trivial it was.
+//   2. Offline study — "Save for Offline" (see StudyApp.jsx) snapshots
+//      whatever's in the DB at that moment; if an explanation hadn't been
+//      generated yet, the offline copy would be missing it, and there's no
+//      network to lazily fetch it once actually offline. Pre-populating the
+//      DB means every future fetch — live or offline-cached — already has it.
+// Processes one bounded batch per call (default 15) rather than the whole
+// table at once, so this stays a fast request instead of a long-running one
+// that could time out; the caller (admin UI, or the offline-save flow) calls
+// this repeatedly until `remaining` hits 0 or `quota_exceeded` comes back.
+router.post('/backfill-explanations', authenticate, async (req, res) => {
+  try {
+    const db = getDB();
+    const limit = Math.max(1, Math.min(50, Number(req.body?.limit) || 15));
+    const { subject_id, exam_type, ids } = req.body || {};
+
+    let where = "q.is_active = TRUE AND (q.explanation IS NULL OR q.explanation = '')";
+    const params = [];
+    if (subject_id) { where += ' AND q.subject_id = ?'; params.push(subject_id); }
+    if (exam_type)  { where += ' AND JSON_CONTAINS(q.exam_types, ?)'; params.push(JSON.stringify(exam_type)); }
+    if (Array.isArray(ids) && ids.length) {
+      where += ` AND q.id IN (${ids.map(() => '?').join(',')})`;
+      params.push(...ids);
+    }
+
+    const [rows] = await db.execute(
+      `SELECT q.id, q.question_text, q.question_type, q.options, q.correct_answers, s.name AS subject_name
+       FROM questions q LEFT JOIN subjects s ON q.subject_id = s.id
+       WHERE ${where} LIMIT ${limit}`,
+      params
+    );
+
+    let generated = 0, failed = 0;
+    for (const question of rows) {
+      let options, correct_answers;
+      try { options = Array.isArray(question.options) ? question.options : JSON.parse(question.options || '[]'); } catch { options = []; }
+      try { correct_answers = Array.isArray(question.correct_answers) ? question.correct_answers : JSON.parse(question.correct_answers || '[]'); } catch { correct_answers = []; }
+
+      if (!correct_answers.length && question.question_type !== 'essay') { failed++; continue; }
+
+      try {
+        const explanation = await explainAnswer({
+          question_text: question.question_text,
+          options, correct_answers,
+          subject: question.subject_name,
+          question_type: question.question_type,
+        });
+        await db.execute('UPDATE questions SET explanation=? WHERE id=?', [explanation, question.id]);
+        generated++;
+      } catch (err) {
+        const geminiErr = parseGeminiError(err);
+        if (geminiErr.isQuotaExceeded) {
+          // Stop the whole batch here — every remaining question in it (and
+          // any future call today) will fail the same way. Report what's
+          // left so the caller knows to stop looping and try again later.
+          const [[{ remaining }]] = await db.execute(`SELECT COUNT(*) as remaining FROM questions q WHERE ${where}`, params);
+          return res.json({ generated, failed, remaining, quota_exceeded: true, retry_delay_seconds: geminiErr.retryDelaySeconds || null });
+        }
+        console.error(`backfill-explanations: failed on question ${question.id}:`, err.message);
+        failed++;
+      }
+    }
+
+    const [[{ remaining }]] = await db.execute(`SELECT COUNT(*) as remaining FROM questions q WHERE ${where}`, params);
+    res.json({ generated, failed, remaining, quota_exceeded: false });
+  } catch (err) {
+    console.error('POST /questions/backfill-explanations error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // POST /api/questions/clean-math-notation — LEGACY, from before the client
 // rendered LaTeX at all. Back then $x^2$ showed up as raw ugly syntax to
 // students, so this route flattened it to Unicode approximations. That's no

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import axios from 'axios';
 import { readOfflineCache, writeOfflineCache } from '../utils/offlineCache';
+import { questionAPI } from '../utils/api';
 import MathText from '../components/MathText';
 import ExplanationBox from '../components/ExplanationBox';
 import { FreeTrialPaywall } from './PracticeMode';
@@ -217,7 +218,8 @@ function SetupScreen({ onStart }) {
 
 // ── SAVE FOR OFFLINE ─────────────────────────────────────────
 function SaveOfflineButton({ config }) {
-  const [state, setState] = useState('idle'); // idle | saving | saved | error | already
+  const [state, setState] = useState('idle'); // idle | saving | explaining | saved | error | already
+  const [explainProgress, setExplainProgress] = useState(null); // { done, total }
 
   useEffect(() => {
     const key = `examos-offline-qset:${config.subject}:${config.examType}:${config.year}`;
@@ -235,6 +237,32 @@ function SaveOfflineButton({ config }) {
       const res = await axios.get(`${API}/questions`, { params });
       const qs = (res.data.questions || []).map(q => ({ ...q, options: safeParseArray(q.options) }));
       if (!qs.length) return setState('error');
+
+      // The whole point of "save for offline" is being able to study with
+      // no connection at all — including reading the explanation for
+      // whichever answer you got wrong. A question that had never been
+      // opened by anyone before had no explanation generated yet, and once
+      // actually offline there'd be no network left to fetch one. So before
+      // finishing the save, fill in any still-missing explanations now,
+      // while there's still a connection to do it with.
+      const missing = qs.filter(q => !q.explanation);
+      if (missing.length) {
+        setState('explaining');
+        setExplainProgress({ done: 0, total: missing.length });
+        for (let i = 0; i < missing.length; i++) {
+          try {
+            const r = await questionAPI.generateExplanation(missing[i].id);
+            missing[i].explanation = r.data?.explanation || '';
+          } catch (e) {
+            // A quota-exhausted or otherwise failed explanation shouldn't
+            // block saving the rest of the set for offline use — this
+            // question just won't have one until a later save/backfill.
+            if (e.response?.data?.code === 'AI_QUOTA_EXCEEDED') break; // no point continuing this run
+          }
+          setExplainProgress({ done: i + 1, total: missing.length });
+        }
+      }
+
       const key = `examos-offline-qset:${config.subject}:${config.examType}:${config.year}`;
       writeOfflineCache(key, qs);
       setState('saved');
@@ -242,28 +270,30 @@ function SaveOfflineButton({ config }) {
   };
 
   const labels = {
-    idle:    { text: '📥 Save for Offline', bg:'#fff', color:'#2563EB', border:'2px solid #2563EB' },
-    saving:  { text: '⏳ Saving…',           bg:'#fff', color:'#94A3B8', border:'2px solid #E2E8F0' },
-    saved:   { text: '✅ Saved for Offline', bg:'#ECFDF5', color:'#16A34A', border:'2px solid #16A34A' },
-    already: { text: '✅ Already Saved · Tap to Refresh', bg:'#ECFDF5', color:'#16A34A', border:'2px solid #16A34A' },
-    error:   { text: '⚠️ Couldn\'t save — check connection', bg:'#FEF2F2', color:'#DC2626', border:'2px solid #FCA5A5' },
+    idle:      { text: '📥 Save for Offline', bg:'#fff', color:'#2563EB', border:'2px solid #2563EB' },
+    saving:    { text: '⏳ Saving…',           bg:'#fff', color:'#94A3B8', border:'2px solid #E2E8F0' },
+    explaining:{ text: explainProgress ? `⏳ Preparing explanations… ${explainProgress.done}/${explainProgress.total}` : '⏳ Preparing explanations…', bg:'#fff', color:'#94A3B8', border:'2px solid #E2E8F0' },
+    saved:     { text: '✅ Saved for Offline', bg:'#ECFDF5', color:'#16A34A', border:'2px solid #16A34A' },
+    already:   { text: '✅ Already Saved · Tap to Refresh', bg:'#ECFDF5', color:'#16A34A', border:'2px solid #16A34A' },
+    error:     { text: '⚠️ Couldn\'t save — check connection', bg:'#FEF2F2', color:'#DC2626', border:'2px solid #FCA5A5' },
   };
   const l = labels[state];
+  const busy = state === 'saving' || state === 'explaining';
 
   return (
     <button
       onClick={handleSave}
-      disabled={state === 'saving'}
+      disabled={busy}
       style={{
         padding:'12px 16px', borderRadius:10, fontSize:13, fontWeight:700,
-        cursor: state==='saving' ? 'default' : 'pointer',
+        cursor: busy ? 'default' : 'pointer',
         fontFamily:"'Inter',sans-serif", transition:'all 0.15s',
         background:l.bg, color:l.color, border:l.border,
       }}
     >
       {l.text}
       <div style={{ fontSize:10.5, fontWeight:500, opacity:0.75, marginTop:2 }}>
-        Practice offline later on this subject, even with no connection
+        Practice offline later on this subject, even with no connection — every question comes with its full explanation, ready with no signal needed
       </div>
     </button>
   );
