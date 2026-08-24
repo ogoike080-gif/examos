@@ -519,6 +519,16 @@ function ExamScreen({ config, onFinish }) {
 
   const handleSubmit = useCallback((auto=false) => {
     if (submittedRef.current) return;
+    // Catch-all for the free-trial paywall — the per-question effect above
+    // only fires once the last question's answer is revealed, which never
+    // happens if it was skipped instead of answered (exactly what was
+    // happening: Submit went straight through to the results screen with
+    // Q5 skipped and the paywall never seen). This guarantees it still
+    // appears before results are reachable, answered-out or not.
+    if (freeTrial && freeTrial.remaining === 0 && !showPaywall) {
+      setShowPaywall(true);
+      return;
+    }
     submittedRef.current = true;
     clearInterval(timerRef.current);
     const score = questions.reduce((s,q) => {
@@ -527,7 +537,7 @@ function ExamScreen({ config, onFinish }) {
       return ans && correct.map(c=>c.toLowerCase().trim()).includes(ans.toLowerCase().trim()) ? s+1 : s;
     }, 0);
     onFinish({ questions, answers, score, total: questions.length, auto });
-  }, [questions, answers]);
+  }, [questions, answers, freeTrial, showPaywall]);
 
   if (loading) return (
     <div style={{ minHeight:'100dvh', display:'flex', alignItems:'center', justifyContent:'center', flexDirection:'column', gap:16, background: isMobile ? '#0F172A' : '#F0F4F8' }}>

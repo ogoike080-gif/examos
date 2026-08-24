@@ -16,9 +16,9 @@ function loadPaystackScript() {
 }
 
 export function usePaystack() {
-  const pay = async ({ email, amount, metadata = {}, onSuccess, onClose }) => {
+  const pay = async ({ email, full_name, amount, metadata = {}, onSuccess, onClose }) => {
     await loadPaystackScript();
-    const res = await axios.post(`${API}/payments/initialize`, { email, amount, metadata });
+    const res = await axios.post(`${API}/payments/initialize`, { email, full_name, amount, metadata });
     const { reference, public_key } = res.data;
 
     const handler = window.PaystackPop.setup({

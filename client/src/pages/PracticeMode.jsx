@@ -320,11 +320,12 @@ export function FreeTrialPaywall({ onDismiss }) {
   // Two very different visitors land here now that "Practice Free" doesn't
   // require login first:
   //  - An anonymous visitor with no account at all — needs a name AND email
-  //    before anything else, since there's nothing to attach a payment to
-  //    yet. Entering these here effectively *is* their signup — an account
-  //    gets created behind the scenes and they're logged in, matching what
-  //    was asked for: only ask them to "log in" (by giving their details)
-  //    after their free questions run out, not before.
+  //    before anything else, since Paystack checkout needs both. The
+  //    account itself only gets created once payment is actually confirmed
+  //    (see routes/payments.js finalizePayment) — not here, and not before
+  //    checkout opens. That way someone who backs out of the Paystack popup
+  //    doesn't end up with a stray, subscription-less account; entering
+  //    these details and completing payment together *is* their signup.
   //  - A logged-in candidate who signed in by name only (no real email on
   //    file — see routes/candidates.js) — already has an account, just
   //    needs an email for Paystack to send the receipt to.
@@ -340,25 +341,22 @@ export function FreeTrialPaywall({ onDismiss }) {
     if (!isRealEmail(email)) { setError('Enter a valid email — Paystack sends your receipt there'); return; }
     setLoading(true);
     try {
-      if (isAnonymous) {
-        // Create the account now, right as they're about to pay — a random
-        // password since they've never set one; they're logging in by
-        // name/reg-number normally anyway, this account mainly exists to
-        // hold the subscription and payment history.
-        const password = (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}${Math.random()}`).slice(0, 20);
-        const res = await axios.post(`${API}/auth/register`, {
-          email, password, full_name: name.trim(), role: 'candidate',
-        });
-        const { token, user: newUser } = res.data;
-        axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
-        useAuthStore.setState({ user: newUser, token, isAuthenticated: true });
-      }
-
       await pay({
         email,
+        full_name: isAnonymous ? name.trim() : undefined,
         amount: 500,
         metadata: { plan_id: 'student', plan_name: 'Student' },
-        onSuccess: () => { window.location.href = '/practice'; },
+        onSuccess: (data) => {
+          // Confirmed — if this was an anonymous checkout, the account was
+          // just created server-side and new_session logs them straight in
+          // with it, so they land back in their practice session already
+          // signed in and subscribed, no separate login step.
+          if (data.new_session) {
+            axios.defaults.headers.common['Authorization'] = `Bearer ${data.new_session.token}`;
+            useAuthStore.setState({ user: data.new_session.user, token: data.new_session.token, isAuthenticated: true });
+          }
+          window.location.reload();
+        },
         onClose: () => setLoading(false),
       });
     } catch (err) {
@@ -445,10 +443,16 @@ function PracticeEngine({ config, onFinish }) {
 
   useEffect(() => { loadQuestions(); }, []);
 
-  // Free trial ran out with this batch — the moment they reveal the answer
-  // to the last question in it, auto-pop the paywall after a short beat so
-  // they get to actually read the explanation first, rather than yanking it
-  // away the instant they answer.
+  // Free trial ran out with this batch. Two triggers, so this can't be
+  // slipped past:
+  //  1. The moment they reach the last question AND reveal its answer, pop
+  //     the paywall after a short beat so they get to read the explanation
+  //     first, rather than yanking it away the instant they answer.
+  //  2. If they SKIP that last question instead of answering it (revealed
+  //     never becomes true) and try to finish the session anyway, the
+  //     paywall still has to appear — handleFinish (below) checks for this
+  //     directly rather than relying solely on this effect, since a skipped
+  //     question means this effect's condition is never met.
   useEffect(() => {
     if (!freeTrial || freeTrial.remaining > 0) return;
     if (!questions.length) return;
@@ -520,6 +524,16 @@ function PracticeEngine({ config, onFinish }) {
   };
 
   const handleFinish = useCallback((auto = false) => {
+    // Catch-all for the free-trial paywall: the per-question effect above
+    // only fires once the last question's answer is revealed, which never
+    // happens if it was skipped instead of answered. This guarantees the
+    // paywall still appears before they can reach the results screen,
+    // whether they answered every question, skipped the last one, or hit
+    // Submit early.
+    if (freeTrial && freeTrial.remaining === 0 && !showPaywall) {
+      setShowPaywall(true);
+      return;
+    }
     clearInterval(timerRef.current);
     setDone(true);
     // Theory/essay questions have no single correct answer to grade against
@@ -534,7 +548,7 @@ function PracticeEngine({ config, onFinish }) {
       return answers[q.id] && correct.map(c=>c.toLowerCase().trim()).includes(answers[q.id].toLowerCase().trim()) ? s+1 : s;
     }, 0);
     onFinish({ questions, answers, score, total: objectiveQs.length, auto });
-  }, [questions, answers, onFinish]);
+  }, [questions, answers, onFinish, freeTrial, showPaywall]);
 
   if (loading) return (
     <div style={{ minHeight:'100dvh', display:'flex', alignItems:'center', justifyContent:'center', flexDirection:'column', gap:16 }}>
