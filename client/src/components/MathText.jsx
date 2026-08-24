@@ -30,8 +30,17 @@ export default function MathText({ text, style, inline }) {
     if (part.length > 2 && part.startsWith('$') && part.endsWith('$')) {
       const math = part.slice(1, -1).trim();
       if (!math) return part;
+      // KaTeX's bundled math fonts cover the common currency symbols ($ £ €
+      // ¥) but not the Naira sign (₦, U+20A6) — very likely to show up given
+      // this app's Nigerian curriculum content (profit/loss, interest,
+      // currency word problems). Rendering it normally throws "Unrecognized
+      // Unicode character" / "No character metrics" warnings and silently
+      // drops the glyph. \unicode{...} sidesteps KaTeX's own font metrics
+      // entirely and draws the raw codepoint using the browser's own font,
+      // which does have it.
+      const mathSafe = math.replace(/₦/g, '\\unicode{x20A6}');
       try {
-        const html = katex.renderToString(math, { throwOnError: false, output: 'htmlAndMathml' });
+        const html = katex.renderToString(mathSafe, { throwOnError: false, output: 'htmlAndMathml' });
         // eslint-disable-next-line react/no-danger
         return <span key={i} dangerouslySetInnerHTML={{ __html: html }} />;
       } catch {

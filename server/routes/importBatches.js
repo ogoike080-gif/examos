@@ -167,7 +167,22 @@ router.post('/zip', authenticate, authorize('superadmin', 'admin', 'examiner'), 
       let quotaExhausted = false;
       let quotaMessage = null;
 
+      // Gemini's free tier caps requests PER MINUTE, separately from its much
+      // larger per-day cap. One vision call per photo back-to-back through a
+      // multi-page batch blows through the per-minute cap in seconds, well
+      // before the day's quota is anywhere near used up — which is exactly
+      // what a short (~30-40s) retryDelay on the resulting error means: it's
+      // the per-minute limiter cooling down, not the day's quota being spent.
+      // Pacing calls stays under that cap so a whole batch can run without
+      // needing to lean on the short-circuit above at all.
+      const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+      const GEMINI_PAGE_DELAY_MS = 20000;
+      let pageIndex = 0;
+
       for (const entry of entries) {
+        if (pageIndex > 0) await sleep(GEMINI_PAGE_DELAY_MS); // pace Gemini calls, see note above
+        pageIndex++;
+
         const filename = entry.entryName.split('/').pop();
         const buffer = entry.getData();
         photoBuffers[filename] = buffer;

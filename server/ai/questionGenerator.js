@@ -105,11 +105,35 @@ function parseGeminiError(err) {
     if (!Number.isNaN(n)) retryDelaySeconds = n;
   }
 
-  const message = retryDelaySeconds
-    ? `Gemini API free-tier daily quota exceeded. Try again in about ${retryDelaySeconds} seconds, or upgrade to a paid Gemini API plan for higher limits.`
-    : `Gemini API free-tier daily quota exceeded. Try again shortly, or upgrade to a paid Gemini API plan for higher limits.`;
+  // Free-tier Gemini has TWO separate quota dimensions that both throw the
+  // same RESOURCE_EXHAUSTED/429 shape: a small per-MINUTE request cap and a
+  // much larger per-DAY cap. They reset completely differently (the minute
+  // cap clears in well under a minute; the day cap doesn't reset until
+  // midnight Pacific), so conflating them produces a message that's actively
+  // misleading either way it's wrong — telling someone to wait "a day" for a
+  // 30-second cooldown, or "retry in 30 seconds" for something that won't
+  // clear for hours. Google's QuotaFailure violation includes a quotaId
+  // string containing "PerMinute" or "PerDay" — check that first. If it's
+  // genuinely absent or ambiguous, fall back to using retryDelaySeconds
+  // itself as the signal: real per-day exhaustion reports a retry delay of
+  // minutes-to-hours, never under a minute.
+  const quotaFailureDetail = apiError?.details?.find(d => typeof d['@type'] === 'string' && d['@type'].includes('QuotaFailure'));
+  const quotaIdText = quotaFailureDetail?.violations?.map(v => `${v.quotaId || ''} ${v.quotaMetric || ''}`).join(' ') || '';
+  const isPerMinute = /PerMinute/i.test(quotaIdText) || (!quotaIdText && retryDelaySeconds !== null && retryDelaySeconds < 60);
+  const isPerDay = /PerDay/i.test(quotaIdText) || (!quotaIdText && (retryDelaySeconds === null || retryDelaySeconds >= 60));
 
-  return { message, isQuotaExceeded: true, retryDelaySeconds };
+  let message;
+  if (isPerMinute && !isPerDay) {
+    message = retryDelaySeconds
+      ? `Gemini API rate limit reached (too many requests per minute on the free tier). This clears itself — try again in about ${retryDelaySeconds} seconds.`
+      : `Gemini API rate limit reached (too many requests per minute on the free tier). This clears itself within a minute or so — try again shortly.`;
+  } else {
+    message = retryDelaySeconds
+      ? `Gemini API free-tier daily quota exceeded. This won't reset for a while (about ${Math.ceil(retryDelaySeconds / 60)} minutes) — resume later, or upgrade to a paid Gemini API plan for higher limits.`
+      : `Gemini API free-tier daily quota exceeded — this typically doesn't reset until later. Resume this batch then, or upgrade to a paid Gemini API plan for higher limits.`;
+  }
+
+  return { message, isQuotaExceeded: true, retryDelaySeconds, isPerMinute: !!(isPerMinute && !isPerDay) };
 }
 
 /**
