@@ -24,11 +24,13 @@ export default function ExplanationBox({ question, onExplanationGenerated, theme
   const [explanation, setExplanation] = useState(question?.explanation || '');
   const [loading, setLoading] = useState(false);
   const [failed, setFailed] = useState(false);
+  const [quotaExceeded, setQuotaExceeded] = useState(false);
   const requestedFor = useRef(null);
 
   useEffect(() => {
     setExplanation(question?.explanation || '');
     setFailed(false);
+    setQuotaExceeded(false);
   }, [question?.id, question?.explanation]);
 
   useEffect(() => {
@@ -39,6 +41,7 @@ export default function ExplanationBox({ question, onExplanationGenerated, theme
     let cancelled = false;
     setLoading(true);
     setFailed(false);
+    setQuotaExceeded(false);
 
     // Goes through the shared queue rather than calling the API directly —
     // when many questions reveal at once (e.g. a full Review Answers
@@ -55,7 +58,17 @@ export default function ExplanationBox({ question, onExplanationGenerated, theme
           setFailed(true);
         }
       })
-      .catch(() => { if (!cancelled) setFailed(true); })
+      .catch((err) => {
+        if (cancelled) return;
+        // Distinguish "the AI provider's daily quota is exhausted" (true of
+        // every question right now, nothing wrong with this one, will work
+        // again once quota resets) from any other failure — previously both
+        // showed the same "No explanation available for this question yet"
+        // message, which reads as "we'll never explain this" when it's
+        // really "not right now, try again later".
+        if (err.isQuotaExceeded) setQuotaExceeded(true);
+        else setFailed(true);
+      })
       .finally(() => { if (!cancelled) setLoading(false); });
 
     return () => { cancelled = true; };
@@ -72,6 +85,14 @@ export default function ExplanationBox({ question, onExplanationGenerated, theme
     lineHeight: 1.7,
     ...style,
   };
+
+  if (!explanation && !loading && quotaExceeded) {
+    return (
+      <div style={{ ...boxStyle, color: dark ? 'rgba(255,255,255,0.6)' : '#92400E', background: dark ? 'rgba(217,119,6,0.12)' : '#FFFBEB', border: `1px solid ${dark ? 'rgba(217,119,6,0.3)' : '#FDE68A'}`, fontStyle: 'italic' }}>
+        Explanations are temporarily unavailable (AI quota reached) — this will work again shortly, try revisiting in a few minutes.
+      </div>
+    );
+  }
 
   if (!explanation && !loading && failed) {
     return (

@@ -5,7 +5,7 @@ const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 const { getDB } = require('../models/db');
 const { authenticate, optionalAuthenticate, authorize } = require('../middleware/auth');
-const { generateQuestionsWithAI, extractQuestionsFromImage, explainAnswer } = require('../ai/questionGenerator');
+const { generateQuestionsWithAI, extractQuestionsFromImage, explainAnswer, parseGeminiError } = require('../ai/questionGenerator');
 const { cleanMathNotation, cleanQuestionFields } = require('../utils/mathNotation');
 const { FREE_QUESTION_LIMIT, hasActivePaidPlan, getRemainingQuota, consumeQuota } = require('../services/freeTrial');
 const AdmZip = require('adm-zip');
@@ -458,15 +458,23 @@ router.post('/:id/generate-explanation', optionalAuthenticate, async (req, res) 
       question_type: question.question_type,
     });
 
-    if (!explanation) {
-      return res.status(502).json({ error: 'Could not generate an explanation right now — try again shortly' });
-    }
-
     await db.execute('UPDATE questions SET explanation=? WHERE id=?', [explanation, question.id]);
     res.json({ explanation, cached: false });
   } catch (err) {
     console.error('POST /questions/:id/generate-explanation error:', err.message);
-    res.status(500).json({ error: 'Failed to generate explanation' });
+    // 429, not a generic 500 — this is Gemini's rate limit, not our server
+    // breaking, and the client (explanationQueue.js) treats these
+    // differently: it won't burn retries against a quota that's guaranteed
+    // exhausted for the rest of the day, and shows an accurate "try again
+    // later" message instead of implying this particular question just
+    // can't be explained.
+    const geminiErr = parseGeminiError(err);
+    const status = geminiErr.isQuotaExceeded ? 429 : 500;
+    res.status(status).json({
+      error: geminiErr.isQuotaExceeded ? geminiErr.message : 'Failed to generate explanation',
+      code: geminiErr.isQuotaExceeded ? 'AI_QUOTA_EXCEEDED' : undefined,
+      retry_delay_seconds: geminiErr.retryDelaySeconds || null,
+    });
   }
 });
 

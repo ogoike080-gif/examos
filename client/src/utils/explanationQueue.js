@@ -21,15 +21,27 @@ import { questionAPI } from './api';
  *   3. De-duplication by question id, so if two components ever ask for the
  *      same question (shouldn't normally happen, but is cheap to guard),
  *      only one network request is made and both callers get the result.
+ *   4. A daily AI-quota-exhausted response (429 AI_QUOTA_EXCEEDED — see
+ *      routes/questions.js) is NOT the same as a transient failure: retrying
+ *      it is guaranteed to fail again and just burns more of an
+ *      already-exhausted quota. The first time this is seen, every other
+ *      question — already queued or requested afterward — short-circuits
+ *      immediately without hitting the network at all, until the cooldown
+ *      Gemini itself suggested has passed. This is what was showing up as
+ *      "explanations skipped on many questions, no matter how simple" — it
+ *      was never about the question, every one of them was quietly hitting
+ *      the same exhausted quota and failing the same way.
  */
 
 const MAX_CONCURRENT = 3;
 const MAX_ATTEMPTS = 3;
 const RETRY_BASE_DELAY_MS = 1200;
+const DEFAULT_QUOTA_COOLDOWN_MS = 60_000; // used when Gemini doesn't specify a retryDelay
 
 let activeCount = 0;
 const pending = []; // FIFO of { run } queued tasks waiting for a free slot
 const inFlight = new Map(); // questionId -> Promise, for de-duplication
+let quotaExhaustedUntil = 0; // Date.now() timestamp; 0 = not currently exhausted
 
 function pump() {
   while (activeCount < MAX_CONCURRENT && pending.length > 0) {
@@ -53,14 +65,28 @@ function enqueue(run) {
   });
 }
 
+function quotaError() {
+  const err = new Error('AI explanations are temporarily unavailable — daily quota reached. Try again shortly.');
+  err.isQuotaExceeded = true;
+  return err;
+}
+
 async function attemptWithRetry(questionId) {
+  if (Date.now() < quotaExhaustedUntil) throw quotaError();
+
   let lastErr;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    if (Date.now() < quotaExhaustedUntil) throw quotaError(); // could have been set by another question's request mid-loop
     try {
       const res = await questionAPI.generateExplanation(questionId);
       return res.data?.explanation || '';
     } catch (err) {
       lastErr = err;
+      if (err.response?.data?.code === 'AI_QUOTA_EXCEEDED') {
+        const delaySec = err.response.data.retry_delay_seconds;
+        quotaExhaustedUntil = Date.now() + (delaySec ? delaySec * 1000 : DEFAULT_QUOTA_COOLDOWN_MS);
+        throw err; // guaranteed to fail again right now — don't burn more attempts
+      }
       // Don't retry a definitive "this question has no correct answer to
       // explain from" — that won't change on retry. Do retry everything
       // else (rate limits, timeouts, transient 5xx).

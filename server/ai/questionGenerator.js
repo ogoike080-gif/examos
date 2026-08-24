@@ -574,6 +574,19 @@ Respond in JSON only (no markdown, no backticks):
   "explanation": "..."
 }`;
 
+  // Explanation generation shares the exact same Gemini account/quota as
+  // everything else (question extraction, essay grading, chat) — so once
+  // that daily free-tier quota is exhausted anywhere, EVERY explanation
+  // call fails too, regardless of how simple the question is. Previously
+  // this retried blindly 3 times against a guaranteed-exhausted quota, then
+  // swallowed the failure and returned '' — which the caller (routes/
+  // questions.js) turned into a fake-successful 200 response with an empty
+  // explanation, and the UI showed "No explanation available for this
+  // question yet" as if that question specifically couldn't be explained.
+  // That's what looked like "skipping explanations on many/easy questions"
+  // — it was never about the question, it was quota exhaustion being
+  // silently absorbed. Now: detect it immediately, skip the pointless
+  // retry loop, and throw a real error the route can surface properly.
   let lastErr;
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
@@ -582,12 +595,19 @@ Respond in JSON only (no markdown, no backticks):
       if (result.explanation) return result.explanation;
       lastErr = new Error('AI returned no explanation field');
     } catch (err) {
+      const geminiErr = parseGeminiError(err);
+      if (geminiErr.isQuotaExceeded) {
+        const cleanErr = new Error(geminiErr.message);
+        cleanErr.isQuotaExceeded = true;
+        cleanErr.retryDelaySeconds = geminiErr.retryDelaySeconds;
+        throw cleanErr; // don't burn remaining attempts against the same exhausted quota
+      }
       lastErr = err;
     }
     if (attempt < 3) await new Promise(r => setTimeout(r, 800 * attempt));
   }
   console.error('explainAnswer failed after retries:', lastErr?.message);
-  return '';
+  throw lastErr || new Error('Failed to generate explanation');
 }
 
 /**
