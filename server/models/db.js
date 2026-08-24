@@ -464,6 +464,35 @@ async function createSchema() {
     )
   `);
 
+  // One-time seed — the exam bodies the import pipeline has always assumed
+  // existed (WAEC, JAMB, etc.) were previously just hardcoded strings in the
+  // client, never real rows here. Now that the import page's "Exam Body"
+  // dropdown reads from this table (so admins can add universities or any
+  // other exam body and have it show up there), seeding these as real rows
+  // means adding a new one doesn't wipe the familiar defaults off the list —
+  // they were never in the table to begin with otherwise. Only runs if the
+  // table is empty, so this never overwrites anything an admin has already
+  // customized (renamed, deactivated, reordered) since this seed inserted.
+  const [[{ cnt }]] = await db.execute('SELECT COUNT(*) as cnt FROM exam_bodies');
+  if (cnt === 0) {
+    const defaults = [
+      ['WAEC', 'West African Examinations Council'],
+      ['JAMB', 'Joint Admissions and Matriculation Board'],
+      ['NECO', 'National Examinations Council'],
+      ['NABTEB', 'National Business and Technical Examinations Board'],
+      ['BECE', 'Basic Education Certificate Examination'],
+      ['POST-UTME', 'Post-UTME'],
+      ['GENERAL', 'General / Uncategorized'],
+    ];
+    for (let i = 0; i < defaults.length; i++) {
+      const [code, name] = defaults[i];
+      await db.execute(
+        'INSERT INTO exam_bodies (id, name, code, display_order) VALUES (?, ?, ?, ?)',
+        [uuidv4(), name, code, i]
+      );
+    }
+  }
+
   await db.execute(`
     CREATE TABLE IF NOT EXISTS examinations (
       id VARCHAR(36) PRIMARY KEY,

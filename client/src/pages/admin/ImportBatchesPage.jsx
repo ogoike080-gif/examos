@@ -1,9 +1,17 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
-import { importBatchAPI, subjectAPI, diagramRepairAPI } from '../../utils/api';
+import { importBatchAPI, subjectAPI, diagramRepairAPI, syllabusAPI } from '../../utils/api';
 
-const EXAM_BODIES = ['WAEC', 'JAMB', 'NECO', 'NABTEB', 'BECE', 'Post-UTME', 'General'];
+// Was a fixed 7-item list — an admin wanting to import papers for a
+// university's own entrance exam (or any exam body not already known to the
+// app) had no way to add one; this page only ever showed what was hardcoded
+// here. Exam bodies are now loaded from the same exam_bodies table the Exam
+// Body Manager page already manages (see routes/syllabus.js) — add one
+// there, or right from the dropdown below, and it shows up in both places
+// immediately, no code change needed.
+const FALLBACK_EXAM_BODIES = ['WAEC', 'JAMB', 'NECO', 'NABTEB', 'BECE', 'Post-UTME', 'General'];
+const ADD_NEW_VALUE = '__add_new__';
 const PAPER_TYPES = ['objective', 'theory', 'essay', 'practical', 'combined'];
 
 const STATUS_COLORS = {
@@ -23,6 +31,7 @@ export default function ImportBatchesPage() {
   const fileRef = useRef(null);
   const repairFileRef = useRef(null);
   const [subjects, setSubjects] = useState([]);
+  const [examBodies, setExamBodies] = useState([]);
   const [batches, setBatches] = useState([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
@@ -36,8 +45,39 @@ export default function ImportBatchesPage() {
 
   useEffect(() => {
     subjectAPI.list().then(r => setSubjects(r.data.subjects || [])).catch(() => {});
+    loadExamBodies();
     loadBatches();
   }, []);
+
+  const loadExamBodies = () => {
+    syllabusAPI.examBodies()
+      .then(r => {
+        const bodies = r.data.exam_bodies || [];
+        setExamBodies(bodies.length ? bodies : FALLBACK_EXAM_BODIES.map(code => ({ id: code, code, name: code })));
+      })
+      .catch(() => setExamBodies(FALLBACK_EXAM_BODIES.map(code => ({ id: code, code, name: code }))));
+  };
+
+  // Same simple prompt-based add ExamBodyManagerPage uses — asks for a full
+  // name and a short code, creates it via the shared exam_bodies table, then
+  // reloads the list and selects the new one in whichever dropdown triggered
+  // this. A university (or any exam body not already in the list) becomes
+  // available here — and in Exam Body Manager, and anywhere else that reads
+  // the same table — immediately, no separate "sync" step.
+  const addExamBodyInline = async (applyTo) => {
+    const name = window.prompt('Exam body name (e.g. University of Lagos Post-UTME):');
+    if (!name?.trim()) return;
+    const code = window.prompt('Short code to use when selecting this (e.g. UNILAG):', name.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 15));
+    if (!code?.trim()) return;
+    try {
+      await syllabusAPI.createExamBody({ name: name.trim(), code: code.trim() });
+      toast.success(`"${name.trim()}" added`);
+      loadExamBodies();
+      applyTo(code.trim().toUpperCase());
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Could not add exam body');
+    }
+  };
 
   const loadBatches = () => {
     setLoading(true);
@@ -117,8 +157,12 @@ export default function ImportBatchesPage() {
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 12, marginBottom: 14 }}>
           <div>
             <label style={labelS}>Exam Body</label>
-            <select style={inputS} value={config.exam_body} onChange={e => set('exam_body', e.target.value)}>
-              {EXAM_BODIES.map(b => <option key={b} value={b}>{b}</option>)}
+            <select style={inputS} value={config.exam_body} onChange={e => {
+              if (e.target.value === ADD_NEW_VALUE) addExamBodyInline(code => set('exam_body', code));
+              else set('exam_body', e.target.value);
+            }}>
+              {examBodies.map(b => <option key={b.id} value={b.code}>{b.name}</option>)}
+              <option value={ADD_NEW_VALUE}>+ Add new exam body…</option>
             </select>
           </div>
           <div>
@@ -182,8 +226,12 @@ export default function ImportBatchesPage() {
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 12 }}>
           <div>
             <label style={labelS}>Exam Body</label>
-            <select style={inputS} value={repairConfig.exam_body} onChange={e => setRepairConfig(c => ({ ...c, exam_body: e.target.value }))}>
-              {['WAEC','JAMB','NECO','NABTEB','BECE','Post-UTME','General'].map(b => <option key={b} value={b}>{b}</option>)}
+            <select style={inputS} value={repairConfig.exam_body} onChange={e => {
+              if (e.target.value === ADD_NEW_VALUE) addExamBodyInline(code => setRepairConfig(c => ({ ...c, exam_body: code })));
+              else setRepairConfig(c => ({ ...c, exam_body: e.target.value }));
+            }}>
+              {examBodies.map(b => <option key={b.id} value={b.code}>{b.name}</option>)}
+              <option value={ADD_NEW_VALUE}>+ Add new exam body…</option>
             </select>
           </div>
           <div>
