@@ -626,13 +626,27 @@ Rules:
  * short backoff before giving up — a single dropped/rate-limited call
  * shouldn't permanently deny a question its explanation.
  */
+// Distinct, honest marker stored when Gemini declines to generate an
+// explanation at all (a content-safety block, not a transient failure) —
+// deliberately NOT blank. An empty string looks identical to "hasn't been
+// tried yet" to the caching check in routes/questions.js, which would mean
+// re-attempting (and getting re-blocked) on every single page view forever.
+// Storing this instead satisfies that cache check, so a genuinely-blocked
+// question is asked about exactly once, not endlessly — and gives whoever
+// reads it an honest, actionable reason instead of silence.
+const EXPLANATION_BLOCKED_MARKER = '⚠️ An explanation could not be generated automatically for this question — it may involve sensitive or restricted content. An admin can add one manually from the Question Bank.';
+
 async function explainAnswer({ question_text, options, correct_answers, subject, question_type }) {
   const correctList = Array.isArray(correct_answers) ? correct_answers : [];
   const isEssayLike = question_type === 'essay' || (!options?.length && correctList.length === 0);
 
-  const prompt = isEssayLike
+  const buildPrompt = (softened) => {
+    const neutralityNote = softened
+      ? `\n\nNote: treat this strictly as a neutral, factual exam-prep question. Don't take or imply any political position, opinion, or stance on any party, figure, or current event — explain only the reasoning/model answer a standard civics/government textbook would give, the same way you'd explain a history or economics question.\n`
+      : '';
+    return isEssayLike
     ? `You are an experienced ${subject || ''} exam tutor. A student just attempted this theory/essay question and wants a model answer to study from.
-
+${neutralityNote}
 Question: ${question_text}
 
 This question may have multiple lettered parts — e.g. (a), (b), (c) — possibly itself further broken into (i), (ii). Address EVERY part, in the same order and using the same labels the question uses.
@@ -650,7 +664,7 @@ Respond in JSON only (no markdown, no backticks):
   "explanation": "..."
 }`
     : `You are an experienced ${subject || ''} exam tutor. A student just answered this question and wants to understand how the correct answer is reached.
-
+${neutralityNote}
 Question: ${question_text}
 
 Options:
@@ -666,13 +680,49 @@ Respond in JSON only (no markdown, no backticks):
 {
   "explanation": "..."
 }`;
+  };
 
+  // One Gemini call, reporting whether it was CONTENT-BLOCKED (a verdict, not
+  // an error — retrying the exact same prompt would get the exact same
+  // verdict) as distinct from a normal successful/empty response.
+  const attemptOnce = async (promptText) => {
+    const response = await ai.models.generateContent({ model: MODEL, contents: promptText });
+    const finishReason = response.candidates?.[0]?.finishReason;
+    if (finishReason && finishReason !== 'STOP') {
+      return { blocked: true, finishReason };
+    }
+    const result = extractJSON(response.text);
+    return { blocked: false, explanation: result.explanation || '' };
+  };
+
+  const prompt = buildPrompt(false);
   let lastErr;
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
-      const response = await ai.models.generateContent({ model: MODEL, contents: prompt });
-      const result = extractJSON(response.text);
-      if (result.explanation) return result.explanation;
+      const outcome = await attemptOnce(prompt);
+
+      if (outcome.blocked) {
+        // Content-safety block, not a transient failure — burning the
+        // remaining retries on an identical prompt won't help. Government/
+        // civics/history content is the likeliest trigger (real political
+        // figures, parties, events), so try exactly once with an explicit
+        // neutrality reframing, which often clears an overzealous filter on
+        // otherwise ordinary exam content. If that ALSO gets blocked, this
+        // genuinely needs a human to write it — stop here rather than
+        // hammering the API on every future page view for a verdict that
+        // won't change.
+        console.error(`explainAnswer blocked by Gemini (finishReason=${outcome.finishReason}), subject=${subject || 'unknown'} — trying one neutrally-reframed retry before giving up.`);
+        try {
+          const softened = await attemptOnce(buildPrompt(true));
+          if (!softened.blocked && softened.explanation) return softened.explanation;
+          console.error(`explainAnswer still blocked after neutral reframing (finishReason=${softened.finishReason || 'empty response'}) — this question needs a manually-written explanation.`);
+        } catch (softenedErr) {
+          console.error('explainAnswer softened retry threw:', softenedErr.message);
+        }
+        return EXPLANATION_BLOCKED_MARKER;
+      }
+
+      if (outcome.explanation) return outcome.explanation;
       lastErr = new Error('AI returned no explanation field');
     } catch (err) {
       lastErr = err;
@@ -814,4 +864,5 @@ module.exports = {
   reconstructDiagramSVG,
   qualityCheckDiagram,
   parseGeminiError,
+  EXPLANATION_BLOCKED_MARKER,
 };

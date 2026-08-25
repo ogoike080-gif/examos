@@ -5,7 +5,7 @@ const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 const { getDB } = require('../models/db');
 const { authenticate, optionalAuthenticate, authorize } = require('../middleware/auth');
-const { generateQuestionsWithAI, extractQuestionsFromImage, explainAnswer, parseGeminiError } = require('../ai/questionGenerator');
+const { generateQuestionsWithAI, extractQuestionsFromImage, explainAnswer, parseGeminiError, EXPLANATION_BLOCKED_MARKER } = require('../ai/questionGenerator');
 const { cleanMathNotation, cleanQuestionFields } = require('../utils/mathNotation');
 const { FREE_QUESTION_LIMIT, hasActivePaidPlan, getRemainingQuota, consumeQuota } = require('../services/freeTrial');
 const AdmZip = require('adm-zip');
@@ -475,8 +475,17 @@ router.post('/:id/generate-explanation', optionalAuthenticate, async (req, res) 
       question_type: question.question_type,
     });
 
-    await db.execute('UPDATE questions SET explanation=? WHERE id=?', [explanation, question.id]);
-    res.json({ explanation, cached: false });
+    // Persist even the blocked-marker text (see EXPLANATION_BLOCKED_MARKER in
+    // questionGenerator.js) — that's deliberate, not a bug: it makes the
+    // cached-explanation check above (line ~452) treat this question as
+    // "already tried" so it stops re-asking Gemini the same blocked question
+    // on every future page view. A real empty string, by contrast, is never
+    // written here — explainAnswer only returns '' on a genuine transient
+    // failure, which SHOULD be retried on the next view.
+    if (explanation) {
+      await db.execute('UPDATE questions SET explanation=? WHERE id=?', [explanation, question.id]);
+    }
+    res.json({ explanation, cached: false, blocked: explanation === EXPLANATION_BLOCKED_MARKER });
   } catch (err) {
     console.error('POST /questions/:id/generate-explanation error:', err.message);
     // 429, not a generic 500 — this is Gemini's rate limit, not our server
