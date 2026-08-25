@@ -7,17 +7,27 @@ import MathText from '../components/MathText';
 import ExplanationBox from '../components/ExplanationBox';
 import { usePaystack, isRealEmail } from './candidate/PaystackPayment';
 import { useAuthStore } from '../store';
+import { syllabusAPI } from '../utils/api';
 
 const API = '/api';
 const LETTERS = ['A','B','C','D','E'];
 
-const EXAM_TYPES = [
+// Only used as a fallback if the live exam_bodies fetch fails — see
+// SetupScreen below, which normally loads this from the server so
+// admin-added exam bodies (e.g. a university's own entrance exam) show up
+// here without a code change. Icons/colors here double as the lookup table
+// for exam bodies that don't come with their own from the server.
+const FALLBACK_EXAM_TYPES = [
   { id:'WAEC',     label:'WAEC',      icon:'📗', color:'#16A34A' },
   { id:'JAMB',     label:'JAMB/UTME', icon:'📘', color:'#2563EB' },
   { id:'NECO',     label:'NECO',      icon:'📙', color:'#D97706' },
   { id:'NABTEB',   label:'NABTEB',    icon:'📕', color:'#DC2626' },
   { id:'POST_UTME',label:'Post UTME', icon:'🏛',  color:'#7C3AED' },
   { id:'CUSTOM',   label:'Practice',  icon:'✏️',  color:'#6366F1' },
+];
+const EXTRA_ICON_COLORS = [
+  { icon:'🏫', color:'#0891B2' }, { icon:'🎓', color:'#DB2777' },
+  { icon:'📚', color:'#65A30D' }, { icon:'🏛️', color:'#EA580C' },
 ];
 
 const SUBJECTS = [
@@ -74,6 +84,31 @@ function SetupScreen({ onStart }) {
 
   const subjectTopics = TOPICS[subject] || TOPICS['default'];
 
+  // Was a fixed list — an exam body added in the admin's Exam Body Manager
+  // (a university's own entrance exam, for instance) had no way to show up
+  // here since this page never asked the server what exists. Now it reads
+  // from the same exam_bodies table Exam Body Manager and the Import page's
+  // dropdown already use — add one there and it appears here automatically.
+  const [examTypes, setExamTypes] = useState(FALLBACK_EXAM_TYPES);
+  useEffect(() => {
+    syllabusAPI.examBodies()
+      .then(r => {
+        const bodies = (r.data.exam_bodies || []).filter(b => b.code);
+        if (!bodies.length) return; // keep the fallback list as-is
+        const known = new Map(FALLBACK_EXAM_TYPES.map(e => [e.id, e]));
+        const mapped = bodies.map((b, i) => known.get(b.code) || {
+          id: b.code, label: b.name || b.code,
+          icon: EXTRA_ICON_COLORS[i % EXTRA_ICON_COLORS.length].icon,
+          color: EXTRA_ICON_COLORS[i % EXTRA_ICON_COLORS.length].color,
+        });
+        // "Practice" (CUSTOM — general practice, not tied to one exam body)
+        // is a client-side concept, not a real exam_bodies row — always
+        // keep it available alongside whatever the admin has added.
+        setExamTypes([...mapped, known.get('CUSTOM')]);
+      })
+      .catch(() => {}); // keep the fallback list on any failure
+  }, []);
+
   const handleStart = () => {
     onStart({ examType, subject, topic, year, paperType, count, duration, mode, shuffle });
   };
@@ -105,7 +140,7 @@ function SetupScreen({ onStart }) {
           <div style={cardS}>
             <label style={labelS}>Exam Type</label>
             <div style={{ display:'flex', flexWrap:'wrap', gap:8 }}>
-              {EXAM_TYPES.map(e => (
+              {examTypes.map(e => (
                 <button key={e.id} onClick={() => setExamType(e.id)} style={{
                   display:'flex', alignItems:'center', gap:8, padding:'8px 16px',
                   borderRadius:'var(--r-lg)', border:`1.5px solid ${examType===e.id ? e.color : 'var(--border)'}`,

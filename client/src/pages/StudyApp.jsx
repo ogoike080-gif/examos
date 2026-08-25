@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import axios from 'axios';
 import { readOfflineCache, writeOfflineCache } from '../utils/offlineCache';
-import { questionAPI } from '../utils/api';
+import { questionAPI, syllabusAPI } from '../utils/api';
 import MathText from '../components/MathText';
 import ExplanationBox from '../components/ExplanationBox';
 import { FreeTrialPaywall } from './PracticeMode';
@@ -35,7 +35,11 @@ function useIsMobile() {
 }
 
 // ── EXAM TYPES & SUBJECTS ─────────────────────────────────────
-const EXAM_TYPES = ['JAMB','WAEC','NECO','NABTEB','POST_UTME','CUSTOM'];
+// Only used as a fallback now if the live exam_bodies fetch fails — see
+// SetupScreen below, which normally loads this list from the server so
+// admin-added exam bodies (e.g. a university's own entrance exam) show up
+// here without a code change.
+const FALLBACK_EXAM_TYPES = ['JAMB','WAEC','NECO','NABTEB','POST_UTME','CUSTOM'];
 const SUBJECTS = [
   'Mathematics','English Language','Physics','Chemistry','Biology',
   'Economics','Government','Literature in English','Geography',
@@ -61,10 +65,30 @@ function SetupScreen({ onStart }) {
   const [shuffle,   setShuffle]   = useState(true);
   const [showInfo,  setShowInfo]  = useState(false);
 
-  const examColors = {
-    JAMB:'#2563EB', WAEC:'#16A34A', NECO:'#D97706',
-    NABTEB:'#DC2626', POST_UTME:'#7C3AED', CUSTOM:'#6366F1'
-  };
+  // Was a fixed 6-button list — an exam body added in the admin's Exam Body
+  // Manager (a university's own entrance exam, for instance) had no way to
+  // ever show up here, since this page never asked the server what exists.
+  // Now it reads from the same exam_bodies table Exam Body Manager and the
+  // Import page's dropdown already use — add one there (or from Import's
+  // own "+ Add new exam body" shortcut) and it appears here automatically,
+  // no code change needed. Falls back to the original hardcoded list only
+  // if the fetch itself fails, so this never regresses to a blank screen.
+  const [examTypes, setExamTypes] = useState(FALLBACK_EXAM_TYPES);
+  useEffect(() => {
+    syllabusAPI.examBodies()
+      .then(r => {
+        const bodies = (r.data.exam_bodies || []).map(b => b.code).filter(Boolean);
+        // CUSTOM ("General practice, not tied to one exam body") is a
+        // client-side concept, not a real exam_bodies row — always keep it
+        // available alongside whatever the admin has added.
+        setExamTypes(bodies.length ? [...bodies, 'CUSTOM'] : FALLBACK_EXAM_TYPES);
+      })
+      .catch(() => setExamTypes(FALLBACK_EXAM_TYPES));
+  }, []);
+
+  const EXAM_COLOR_PALETTE = ['#2563EB','#16A34A','#D97706','#DC2626','#7C3AED','#0891B2','#DB2777','#65A30D'];
+  const examColors = { CUSTOM: '#6366F1' };
+  examTypes.forEach((e, i) => { if (!examColors[e]) examColors[e] = EXAM_COLOR_PALETTE[i % EXAM_COLOR_PALETTE.length]; });
 
   return (
     <div style={{ minHeight:'100dvh', background:'#F0F4F8', fontFamily:"'Inter',sans-serif" }}>
@@ -87,7 +111,7 @@ function SetupScreen({ onStart }) {
         <div style={{ background:'#fff', borderRadius:12, padding:'20px', marginBottom:16, boxShadow:'0 1px 4px rgba(0,0,0,0.08)' }}>
           <div style={{ fontSize:11, fontWeight:700, color:'#94A3B8', textTransform:'uppercase', letterSpacing:'0.08em', marginBottom:12 }}>Exam Type</div>
           <div style={{ display:'flex', flexWrap:'wrap', gap:8 }}>
-            {EXAM_TYPES.map(e => (
+            {examTypes.map(e => (
               <button key={e} onClick={() => setExamType(e)} style={{
                 padding:'8px 18px', borderRadius:20, border:`2px solid ${examType===e ? examColors[e] : '#E2E8F0'}`,
                 background: examType===e ? examColors[e] : '#F8FAFC',

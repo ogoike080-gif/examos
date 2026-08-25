@@ -8,7 +8,7 @@
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const { getDB } = require('../models/db');
-const { authenticate, authorize } = require('../middleware/auth');
+const { authenticate, optionalAuthenticate, authorize } = require('../middleware/auth');
 const { generateTopicContent } = require('../ai/questionGenerator');
 
 const router = express.Router();
@@ -17,10 +17,18 @@ const ADMIN_ROLES = ['superadmin', 'admin'];
 
 // ═══════════════════════════ EXAM BODIES ═══════════════════════════════════
 
-router.get('/exam-bodies', authenticate, async (req, res) => {
+// Deliberately optionalAuthenticate, not authenticate — the practice/study
+// setup screens (StudyApp.jsx, PracticeMode.jsx) need this list to build
+// their Exam Type buttons BEFORE a visitor logs in at all (this is the
+// anonymous "Practice Free" entry point). This is just a read-only listing
+// of exam body names, nothing sensitive, so there's no reason to force a
+// login just to see which exam bodies exist. Admin/staff still see inactive
+// ones too; anonymous visitors and candidates only see active ones, same as
+// before.
+router.get('/exam-bodies', optionalAuthenticate, async (req, res) => {
   try {
     const db = getDB();
-    const activeOnly = req.user.role === 'candidate';
+    const activeOnly = !req.user || req.user.role === 'candidate';
     const [rows] = await db.execute(
       `SELECT * FROM exam_bodies ${activeOnly ? 'WHERE is_active = TRUE' : ''} ORDER BY display_order, name`
     );
