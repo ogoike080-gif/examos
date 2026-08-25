@@ -2,6 +2,25 @@ import React, { useState, useEffect, useRef } from 'react';
 import MathText from './MathText';
 import { requestExplanation } from '../utils/explanationQueue';
 
+// Mirrors isBareAnswerLetter in server/routes/questions.js — MUST stay in
+// sync with that copy. Some earlier import path left plenty of questions
+// with their explanation column set to nothing but the answer letter itself
+// ("A", "Option A", "The answer is A"), which isn't a real explanation, it's
+// the same thing the correct-answer checkmark already shows. Without this
+// check, that junk text satisfies `question?.explanation` below and the box
+// just displays "A" forever, never even asking the server to generate a real
+// one — this is what makes the placeholder look like "explanations don't
+// work for this question" when actually no attempt was ever made.
+function isBareAnswerLetter(text) {
+  if (!text) return true;
+  let t = text.trim();
+  if (!t) return true;
+  t = t.replace(/^(the\s+)?(correct\s+)?answer\s*(is|:)?\s*/i, '');
+  t = t.replace(/^option\s*/i, '');
+  t = t.trim();
+  return /^\(?[A-Ea-e]\)?\.?$/.test(t);
+}
+
 /**
  * The explanation box shown under a revealed question. Two jobs:
  *
@@ -21,14 +40,15 @@ import { requestExplanation } from '../utils/explanationQueue';
  * generation for questions nobody has looked at yet.
  */
 export default function ExplanationBox({ question, onExplanationGenerated, theme = 'light', style }) {
-  const [explanation, setExplanation] = useState(question?.explanation || '');
+  const initialExplanation = question?.explanation && !isBareAnswerLetter(question.explanation) ? question.explanation : '';
+  const [explanation, setExplanation] = useState(initialExplanation);
   const [loading, setLoading] = useState(false);
   const [failed, setFailed] = useState(false);
   const [quotaExceeded, setQuotaExceeded] = useState(false);
   const requestedFor = useRef(null);
 
   useEffect(() => {
-    setExplanation(question?.explanation || '');
+    setExplanation(question?.explanation && !isBareAnswerLetter(question.explanation) ? question.explanation : '');
     setFailed(false);
     setQuotaExceeded(false);
   }, [question?.id, question?.explanation]);

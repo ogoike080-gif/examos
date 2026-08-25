@@ -13,6 +13,30 @@ const sharp = require('sharp');
 
 const router = express.Router();
 
+// Some earlier import path (a CSV mapping or a manual data-entry slip — the
+// exact source is lost to history) left plenty of questions with their
+// `explanation` column set to nothing more than the answer letter itself:
+// "A", "A.", "(A)", "Option A", "Answer: A". That's not an explanation, it's
+// the same thing the "correct answer" checkmark already shows — but because
+// it's non-empty, the generate-explanation cache check below (and the
+// client's ExplanationBox) both treat it as "already has a real explanation"
+// and never call the AI at all. Detect that specific shape and treat it as
+// equivalent to missing, so these questions get a real explanation generated
+// instead of being silently skipped forever.
+function isBareAnswerLetter(text) {
+  if (!text) return true;
+  let t = text.trim();
+  if (!t) return true;
+  // Strip common prefixes so "Option A", "Answer: A", "The answer is A" all
+  // reduce to just "A" before the final bare-letter check — a plain regex
+  // without this step either misses those phrasings or false-positives on
+  // genuine explanations that happen to start with the word "Answer".
+  t = t.replace(/^(the\s+)?(correct\s+)?answer\s*(is|:)?\s*/i, '');
+  t = t.replace(/^option\s*/i, '');
+  t = t.trim();
+  return /^\(?[A-Ea-e]\)?\.?$/.test(t);
+}
+
 // ── Image upload (question diagrams/graphs) ──
 const uploadDir = path.join(__dirname, '..', 'uploads', 'questions');
 fs.mkdirSync(uploadDir, { recursive: true });
@@ -449,7 +473,7 @@ router.post('/:id/generate-explanation', optionalAuthenticate, async (req, res) 
     const question = rows[0];
     if (!question) return res.status(404).json({ error: 'Question not found' });
 
-    if (question.explanation && question.explanation.trim()) {
+    if (question.explanation && !isBareAnswerLetter(question.explanation)) {
       return res.json({ explanation: question.explanation, cached: true });
     }
 
