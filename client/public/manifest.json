@@ -4,7 +4,7 @@
   "description": "AI-powered Computer Based Testing platform for Nigerian schools",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#0A0A0F",
+  "background_color": "#F8F8FC",
   "theme_color": "#6366F1",
   "orientation": "any",
   "scope": "/",
