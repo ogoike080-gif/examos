@@ -1,14 +1,21 @@
 {
-  "name": "examos",
-  "version": "1.0.0",
+  "name": "sarms-react",
   "private": true,
-  "description": "Root marker \u2014 real dependencies live in server/package.json and client/package.json.",
-  "engines": {
-    "node": ">=20"
-  },
+  "version": "1.0.0",
+  "type": "module",
   "scripts": {
-    "install": "cd client && npm install && cd ../server && npm install",
-    "build": "cd client && npm run build",
-    "start": "cd server && npm start"
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "papaparse": "^5.6.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "vite": "^5.4.11"
   }
 }

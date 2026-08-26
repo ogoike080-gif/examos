@@ -7,7 +7,7 @@ import MathText from '../components/MathText';
 import ExplanationBox from '../components/ExplanationBox';
 import { usePaystack, isRealEmail } from './candidate/PaystackPayment';
 import { useAuthStore } from '../store';
-import { syllabusAPI } from '../utils/api';
+import { syllabusAPI, subjectAPI } from '../utils/api';
 
 const API = '/api';
 const LETTERS = ['A','B','C','D','E'];
@@ -30,7 +30,11 @@ const EXTRA_ICON_COLORS = [
   { icon:'📚', color:'#65A30D' }, { icon:'🏛️', color:'#EA580C' },
 ];
 
-const SUBJECTS = [
+// Only used as a fallback if the live subjects fetch fails — see
+// SetupScreen below, which normally loads this list from the server so
+// admin-added subjects (e.g. a university's own "GS COURSE 101" or
+// "MATHS101") show up here without a code change.
+const FALLBACK_SUBJECTS = [
   'Mathematics','English Language','Physics','Chemistry','Biology',
   'Economics','Government','Literature in English','Geography',
   'Computer Studies','Accounting','Agricultural Science',
@@ -109,6 +113,19 @@ function SetupScreen({ onStart }) {
       .catch(() => {}); // keep the fallback list on any failure
   }, []);
 
+  // Same fix, same reason — subjects only ever came from a hardcoded list
+  // here, so a subject the admin added specifically for a university course
+  // (see the Subjects admin page) had no path to ever appear as an option.
+  const [subjectList, setSubjectList] = useState(FALLBACK_SUBJECTS);
+  useEffect(() => {
+    subjectAPI.list()
+      .then(r => {
+        const names = (r.data.subjects || []).map(s => s.name).filter(Boolean);
+        if (names.length) setSubjectList(names);
+      })
+      .catch(() => {}); // keep the fallback list on any failure
+  }, []);
+
   const handleStart = () => {
     onStart({ examType, subject, topic, year, paperType, count, duration, mode, shuffle });
   };
@@ -161,7 +178,7 @@ function SetupScreen({ onStart }) {
               <label style={labelS}>Subject</label>
               <select value={subject} onChange={e => { setSubject(e.target.value); setTopic('All Topics'); }}
                 style={{ width:'100%', padding:'10px 12px', borderRadius:'var(--r)', border:'1.5px solid var(--border-md)', background:'var(--bg-raised)', color:'var(--text-primary)', fontFamily:'var(--font-body)', fontSize:14, cursor:'pointer' }}>
-                {SUBJECTS.map(s => <option key={s} value={s}>{s}</option>)}
+                {subjectList.map(s => <option key={s} value={s}>{s}</option>)}
               </select>
             </div>
             <div style={cardS}>

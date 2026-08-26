@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import axios from 'axios';
 import { readOfflineCache, writeOfflineCache } from '../utils/offlineCache';
-import { questionAPI, syllabusAPI } from '../utils/api';
+import { questionAPI, syllabusAPI, subjectAPI } from '../utils/api';
 import MathText from '../components/MathText';
 import ExplanationBox from '../components/ExplanationBox';
 import { FreeTrialPaywall } from './PracticeMode';
@@ -40,7 +40,11 @@ function useIsMobile() {
 // admin-added exam bodies (e.g. a university's own entrance exam) show up
 // here without a code change.
 const FALLBACK_EXAM_TYPES = ['JAMB','WAEC','NECO','NABTEB','POST_UTME','CUSTOM'];
-const SUBJECTS = [
+// Only used as a fallback if the live subjects fetch fails — see
+// SetupScreen below, which normally loads this list from the server so
+// admin-added subjects (e.g. a university's own "GS COURSE 101" or
+// "MATHS101") show up here without a code change.
+const FALLBACK_SUBJECTS = [
   'Mathematics','English Language','Physics','Chemistry','Biology',
   'Economics','Government','Literature in English','Geography',
   'Computer Studies','Accounting','Agricultural Science',
@@ -86,6 +90,19 @@ function SetupScreen({ onStart }) {
       .catch(() => setExamTypes(FALLBACK_EXAM_TYPES));
   }, []);
 
+  // Same fix, same reason — subjects only ever came from a hardcoded list
+  // here, so a subject the admin added specifically for a university course
+  // (see the Subjects admin page) had no path to ever appear as an option.
+  const [subjects, setSubjects] = useState(FALLBACK_SUBJECTS);
+  useEffect(() => {
+    subjectAPI.list()
+      .then(r => {
+        const names = (r.data.subjects || []).map(s => s.name).filter(Boolean);
+        setSubjects(names.length ? names : FALLBACK_SUBJECTS);
+      })
+      .catch(() => setSubjects(FALLBACK_SUBJECTS));
+  }, []);
+
   const EXAM_COLOR_PALETTE = ['#2563EB','#16A34A','#D97706','#DC2626','#7C3AED','#0891B2','#DB2777','#65A30D'];
   const examColors = { CUSTOM: '#6366F1' };
   examTypes.forEach((e, i) => { if (!examColors[e]) examColors[e] = EXAM_COLOR_PALETTE[i % EXAM_COLOR_PALETTE.length]; });
@@ -128,7 +145,7 @@ function SetupScreen({ onStart }) {
           <div style={{ background:'#fff', borderRadius:12, padding:'20px', boxShadow:'0 1px 4px rgba(0,0,0,0.08)' }}>
             <div style={{ fontSize:11, fontWeight:700, color:'#94A3B8', textTransform:'uppercase', letterSpacing:'0.08em', marginBottom:10 }}>Subject</div>
             <select value={subject} onChange={e => setSubject(e.target.value)} style={{ width:'100%', padding:'10px 12px', borderRadius:8, border:'1.5px solid #E2E8F0', background:'#F8FAFC', color:'#1E293B', fontFamily:"'Inter',sans-serif", fontSize:14, cursor:'pointer' }}>
-              {SUBJECTS.map(s => <option key={s} value={s}>{s}</option>)}
+              {subjects.map(s => <option key={s} value={s}>{s}</option>)}
             </select>
           </div>
           <div style={{ background:'#fff', borderRadius:12, padding:'20px', boxShadow:'0 1px 4px rgba(0,0,0,0.08)' }}>
