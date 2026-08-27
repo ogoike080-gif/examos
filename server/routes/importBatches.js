@@ -53,7 +53,9 @@ async function cropDiagram(buffer, box) {
     const meta = await img.metadata();
     if (!meta.width || !meta.height) return null;
 
-    const pad = 3;
+    // 8pt margin, not 3 — see routes/import.js for why. Cropping too tight
+    // is unrecoverable; a little extra whitespace around the figure is not.
+    const pad = 8;
     const xMin = Math.max(0, box.x_min - pad);
     const yMin = Math.max(0, box.y_min - pad);
     const xMax = Math.min(100, box.x_max + pad);
@@ -62,8 +64,9 @@ async function cropDiagram(buffer, box) {
 
     const left = Math.round((xMin / 100) * meta.width);
     const top = Math.round((yMin / 100) * meta.height);
-    const width = Math.round(((xMax - xMin) / 100) * meta.width);
-    const height = Math.round(((yMax - yMin) / 100) * meta.height);
+    // Clamp so rounding never pushes the extract box past the image bounds.
+    const width = Math.min(Math.round(((xMax - xMin) / 100) * meta.width), meta.width - left);
+    const height = Math.min(Math.round(((yMax - yMin) / 100) * meta.height), meta.height - top);
     if (width < 20 || height < 20) return null;
 
     fs.mkdirSync(DIAGRAMS_DIR, { recursive: true });

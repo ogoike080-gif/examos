@@ -739,7 +739,9 @@ async function cropDiagram(buffer, box) {
     const img = sharp(buffer);
     const meta = await img.metadata();
     if (!meta.width || !meta.height) return null;
-    const pad = 3;
+    // 8pt margin, not 3 — see routes/import.js for why. Cropping too tight
+    // is unrecoverable; a little extra whitespace around the figure is not.
+    const pad = 8;
     const xMin = Math.max(0, box.x_min - pad);
     const yMin = Math.max(0, box.y_min - pad);
     const xMax = Math.min(100, box.x_max + pad);
@@ -747,8 +749,9 @@ async function cropDiagram(buffer, box) {
     if (xMax <= xMin || yMax <= yMin) return null;
     const left = Math.round((xMin / 100) * meta.width);
     const top = Math.round((yMin / 100) * meta.height);
-    const width = Math.round(((xMax - xMin) / 100) * meta.width);
-    const height = Math.round(((yMax - yMin) / 100) * meta.height);
+    // Clamp so rounding never pushes the extract box past the image bounds.
+    const width = Math.min(Math.round(((xMax - xMin) / 100) * meta.width), meta.width - left);
+    const height = Math.min(Math.round(((yMax - yMin) / 100) * meta.height), meta.height - top);
     if (width < 20 || height < 20) return null;
     fs.mkdirSync(DIAGRAMS_DIR, { recursive: true });
     const filename = `${uuidv4()}.jpg`;
@@ -777,6 +780,12 @@ router.post('/repair-diagrams', authenticate, authorize('superadmin', 'admin'), 
     if (!req.file) return res.status(400).json({ error: 'No zip file provided' });
 
     const { exam_body, year, subject_id } = req.body;
+    // Normal mode only touches rows whose media_url is missing/broken —
+    // that's what this endpoint was originally built for. `force` also
+    // re-crops rows whose image file DOES exist, using the wider 8pt margin
+    // above, so admins can fix diagrams that imported fine but came out
+    // clipped/too-tight under the old 3pt margin, without duplicating rows.
+    const force = req.body.force === 'true' || req.body.force === true;
     if (!exam_body || !year) return res.status(400).json({ error: 'exam_body and year are required, to scope which live questions this can match against' });
 
     let entries;
@@ -829,9 +838,10 @@ router.post('/repair-diagrams', authenticate, authorize('superadmin', 'admin'), 
           if (!match) { noMatch++; unmatched.push({ filename, number: q.number ?? null, text: cleaned.question_text.slice(0, 60) }); continue; }
           if (!q.has_diagram) { noDiagram++; continue; }
 
-          // Skip re-cropping if this row's media_url already resolves —
-          // avoids unnecessary AI/crop work on rows that were never broken.
-          if (match.media_url) {
+          // Skip re-cropping if this row's media_url already resolves — UNLESS
+          // force is set, in which case we deliberately re-crop it anyway
+          // (this is how an already-imported-but-clipped diagram gets fixed).
+          if (!force && match.media_url) {
             const existingPath = path.join(__dirname, '..', match.media_url.replace(/^\//, ''));
             if (fs.existsSync(existingPath)) { alreadyFine++; continue; }
           }
@@ -849,9 +859,11 @@ router.post('/repair-diagrams', authenticate, authorize('superadmin', 'admin'), 
     }
 
     res.json({
-      message: `Repaired ${repaired} diagram(s)`,
+      message: force
+        ? `Re-cropped ${repaired} diagram(s) with the wider margin`
+        : `Repaired ${repaired} diagram(s)`,
       repaired, already_fine: alreadyFine, no_diagram_needed: noDiagram,
-      no_match: noMatch, pages_failed: pagesFailed,
+      no_match: noMatch, pages_failed: pagesFailed, force,
       unmatched_sample: unmatched.slice(0, 10),
     });
   });
