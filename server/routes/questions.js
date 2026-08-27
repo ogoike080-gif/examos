@@ -37,6 +37,29 @@ function isBareAnswerLetter(text) {
   return /^\(?[A-Ea-e]\)?\.?$/.test(t);
 }
 
+// correct_answers is meant to be stored as a JSON-encoded array â '["A"]' or
+// '["45.5"]' â but not every import path over this app's history guaranteed
+// that; some questions have it as a bare, unquoted value instead, stored
+// directly as e.g. A or 45.5 with no JSON encoding at all. A plain
+// `JSON.parse(raw)` throws on that (it isn't valid JSON), and a naive
+// try/catch that falls back to [] on failure silently treats a genuinely
+// recorded answer as if none exists â exactly the bug behind
+// generate-explanation returning 400 "no recorded correct answer" for
+// questions that the app can otherwise correctly mark right/wrong (which
+// evidently reads this same column through a more forgiving path elsewhere).
+// Falling back to the raw string itself, not [], is the fix: it preserves a
+// genuinely-recorded bare answer instead of discarding it.
+function parseAnswerList(raw) {
+  if (Array.isArray(raw)) return raw;
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [String(parsed)];
+  } catch {
+    return [String(raw).trim()].filter(Boolean);
+  }
+}
+
 // ── Image upload (question diagrams/graphs) ──
 const uploadDir = path.join(__dirname, '..', 'uploads', 'questions');
 fs.mkdirSync(uploadDir, { recursive: true });
@@ -480,7 +503,7 @@ router.post('/:id/generate-explanation', optionalAuthenticate, async (req, res) 
     const options = Array.isArray(question.options) ? question.options
       : (() => { try { return JSON.parse(question.options || '[]'); } catch { return []; } })();
     const correct_answers = Array.isArray(question.correct_answers) ? question.correct_answers
-      : (() => { try { return JSON.parse(question.correct_answers || '[]'); } catch { return []; } })();
+      : parseAnswerList(question.correct_answers);
 
     // Essay/theory questions have no single correct_answers value by design
     // (there's nothing to "match" against) — explainAnswer handles that case
@@ -599,7 +622,7 @@ router.post('/backfill-explanations', authenticate, async (req, res) => {
     for (const question of rows) {
       let options, correct_answers;
       try { options = Array.isArray(question.options) ? question.options : JSON.parse(question.options || '[]'); } catch { options = []; }
-      try { correct_answers = Array.isArray(question.correct_answers) ? question.correct_answers : JSON.parse(question.correct_answers || '[]'); } catch { correct_answers = []; }
+      correct_answers = parseAnswerList(question.correct_answers);
 
       if (!correct_answers.length && question.question_type !== 'essay') { failed++; continue; }
 
