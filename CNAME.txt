@@ -1,3 +1,0 @@
-cname@ c78fkr08.up.railway.app
-
-txt_ _railway-verify  railway-verify=1e189b36e0ea76ee06927d093d531c58cdf3005bae06cad48406a72d6f6c8dcd
