@@ -71,9 +71,32 @@ async function cropDiagram(buffer, box) {
 
     fs.mkdirSync(DIAGRAMS_DIR, { recursive: true });
     const filename = `${uuidv4()}.jpg`;
+    // A raw extract() straight from a phone photo of a printed page looks
+    // exactly like what it is — dull/grayish "paper" background instead of
+    // clean white, soft/blurry edges, whatever tilt was in the original
+    // shot. None of that is fixable by cropping tighter; it needs actual
+    // image cleanup. This is deliberately cheap, deterministic, sharp-only
+    // processing (no AI call, no added cost/quota) applied to every single
+    // diagram crop by default — the opt-in AI "Reconstruct Diagram" tool
+    // (reconstructDiagramSVG, used from the review screen) is still there
+    // for cases that need a full vector redraw, but most diagrams just need
+    // this to stop looking like a screenshot of a photograph:
+    //   - rotate(): reads embedded EXIF orientation so a sideways phone
+    //     photo doesn't end up as a sideways diagram
+    //   - normalize(): stretches the tonal range so the page's off-white/
+    //     gray scan background actually reads as white, and lines that were
+    //     faint from bad lighting get real contrast
+    //   - sharpen(): counters the soft, slightly-out-of-focus look that
+    //     phone-camera JPEG compression leaves on fine diagram lines/labels
+    //   - gamma(): lifts shadow detail a touch without blowing out
+    //     highlights, so shaded regions in the diagram stay legible
     await sharp(buffer)
       .extract({ left, top, width, height })
-      .jpeg({ quality: 88 })
+      .rotate()
+      .normalize()
+      .gamma(1.05)
+      .sharpen({ sigma: 0.6 })
+      .jpeg({ quality: 92, mozjpeg: true })
       .toFile(path.join(DIAGRAMS_DIR, filename));
 
     return `/uploads/diagrams/${filename}`;
