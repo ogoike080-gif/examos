@@ -86,18 +86,48 @@ async function cropDiagram(buffer, box) {
     //   - normalize(): stretches the tonal range so the page's off-white/
     //     gray scan background actually reads as white, and lines that were
     //     faint from bad lighting get real contrast
+    //   - trim(): the 8pt safety pad above is deliberately generous — better
+    //     to keep a little extra border than risk slicing off part of the
+    //     diagram. But that same safety margin is exactly what makes a crop
+    //     look like "an excerpt cut out of a bigger page" instead of a
+    //     clean, standalone image — extra plain background around the
+    //     actual figure is the single biggest visual tell that something
+    //     was copied from a photo. trim() shaves off any uniform border down
+    //     to the real content, tightening the crop regardless of how much
+    //     of that safety padding was actually needed for this particular
+    //     diagram. Wrapped in its own try/catch below — a mostly-blank
+    //     diagram (a sparse graph on lots of empty grid) can occasionally
+    //     make trim's background-detection misfire or over-trim, and losing
+    //     the whole diagram because of that is worse than shipping one
+    //     that's merely less tightly cropped than ideal.
     //   - sharpen(): counters the soft, slightly-out-of-focus look that
     //     phone-camera JPEG compression leaves on fine diagram lines/labels
     //   - gamma(): lifts shadow detail a touch without blowing out
     //     highlights, so shaded regions in the diagram stay legible
-    await sharp(buffer)
+    const basePipeline = () => sharp(buffer)
       .extract({ left, top, width, height })
       .rotate()
-      .normalize()
-      .gamma(1.05)
-      .sharpen({ sigma: 0.6 })
-      .jpeg({ quality: 92, mozjpeg: true })
-      .toFile(path.join(DIAGRAMS_DIR, filename));
+      .normalize();
+
+    try {
+      // threshold intentionally higher than sharp's default (10) — a
+      // phone-photo background is never perfectly flat even after
+      // normalizing, and a too-low threshold would stop trimming at the
+      // first faint shadow instead of the actual diagram edge.
+      await basePipeline()
+        .trim({ threshold: 25 })
+        .gamma(1.05)
+        .sharpen({ sigma: 0.6 })
+        .jpeg({ quality: 92, mozjpeg: true })
+        .toFile(path.join(DIAGRAMS_DIR, filename));
+    } catch (trimErr) {
+      console.error('diagram trim failed, falling back to untrimmed crop:', trimErr.message);
+      await basePipeline()
+        .gamma(1.05)
+        .sharpen({ sigma: 0.6 })
+        .jpeg({ quality: 92, mozjpeg: true })
+        .toFile(path.join(DIAGRAMS_DIR, filename));
+    }
 
     return `/uploads/diagrams/${filename}`;
   } catch (err) {
