@@ -9,6 +9,90 @@ import styles from './QuestionBankPage.module.css';
 const DIFF_COLORS = { easy: 'tag-green', medium: 'tag-amber', hard: 'tag-red' };
 const TYPE_LABELS = { mcq:'MCQ', multi_answer:'Multi', essay:'Essay', true_false:'T/F', fill_blank:'Fill', coding:'Code', drag_drop:'Drag' };
 
+// Re-uploads the original source-paper photos for one exam_body + year (+
+// optional subject) and patches media_url on the matching live questions.
+// "Force" mode also re-crops diagrams that already have an image on disk —
+// that's what fixes a diagram that imported fine but came out clipped/too
+// tight (the normal, non-force run only fills in ones that are missing).
+function RepairDiagramsModal({ subjects, onClose, onDone }) {
+  const [examBody, setExamBody] = useState('WAEC');
+  const [year, setYear] = useState('');
+  const [subjectId, setSubjectId] = useState('');
+  const [force, setForce] = useState(true);
+  const [zip, setZip] = useState(null);
+  const [running, setRunning] = useState(false);
+  const [result, setResult] = useState(null);
+
+  const run = async () => {
+    if (!zip) return toast.error('Choose a .zip of the original source-paper photos first');
+    if (!year.trim()) return toast.error('Year is required');
+    setRunning(true);
+    setResult(null);
+    try {
+      const res = await questionAPI.repairDiagrams({ zip, examBody, year: year.trim(), subjectId: subjectId || undefined, force });
+      setResult(res.data);
+      toast.success(res.data.message || 'Done');
+      onDone();
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Repair failed');
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  return (
+    <div className="modal-backdrop" onClick={e => e.target === e.currentTarget && !running && onClose()}>
+      <div className="modal" style={{ maxWidth: 460 }}>
+        <div className="modal-header">
+          <h3>Fix / Re-crop Diagrams</h3>
+          <button onClick={() => !running && onClose()} style={{ background:'var(--bg-raised)', border:'1px solid var(--border)', borderRadius:'var(--r)', width:30, height:30, cursor:'pointer' }}>✕</button>
+        </div>
+        <div className="modal-body">
+          <p style={{ fontSize:13, color:'var(--text-secondary)', marginBottom:14, lineHeight:1.5 }}>
+            Upload the same zip of original page photos you imported from. Matching is by question number (or text) within this exam body + year.
+          </p>
+          <div style={{ display:'flex', flexDirection:'column', gap:12 }}>
+            <div>
+              <label style={{ fontSize:12, fontWeight:600, display:'block', marginBottom:4 }}>Exam Body</label>
+              <input value={examBody} onChange={e => setExamBody(e.target.value)} placeholder="WAEC" style={{ width:'100%', padding:'8px 10px', borderRadius:8, border:'1px solid var(--border)' }} />
+            </div>
+            <div>
+              <label style={{ fontSize:12, fontWeight:600, display:'block', marginBottom:4 }}>Year</label>
+              <input value={year} onChange={e => setYear(e.target.value)} placeholder="1988" style={{ width:'100%', padding:'8px 10px', borderRadius:8, border:'1px solid var(--border)' }} />
+            </div>
+            <div>
+              <label style={{ fontSize:12, fontWeight:600, display:'block', marginBottom:4 }}>Subject (optional)</label>
+              <select value={subjectId} onChange={e => setSubjectId(e.target.value)} style={{ width:'100%', padding:'8px 10px', borderRadius:8, border:'1px solid var(--border)' }}>
+                <option value="">All subjects</option>
+                {subjects.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={{ fontSize:12, fontWeight:600, display:'block', marginBottom:4 }}>Source photos (.zip)</label>
+              <input type="file" accept=".zip" onChange={e => setZip(e.target.files[0])} />
+            </div>
+            <label style={{ display:'flex', alignItems:'center', gap:8, fontSize:13, cursor:'pointer' }}>
+              <input type="checkbox" checked={force} onChange={e => setForce(e.target.checked)} />
+              Re-crop even diagrams that already have an image (fixes clipped/too-tight crops, not just missing ones)
+            </label>
+            {result && (
+              <div style={{ fontSize:12, background:'var(--bg-raised)', border:'1px solid var(--border)', borderRadius:8, padding:'10px 12px', lineHeight:1.7 }}>
+                Re-cropped: <b>{result.repaired}</b> · Already fine: <b>{result.already_fine}</b> · No diagram needed: <b>{result.no_diagram_needed}</b> · No match: <b>{result.no_match}</b> · Pages failed: <b>{result.pages_failed}</b>
+              </div>
+            )}
+          </div>
+        </div>
+        <div className="modal-footer">
+          <button className="btn btn-secondary" onClick={onClose} disabled={running}>Close</button>
+          <button className="btn btn-primary" onClick={run} disabled={running}>
+            {running ? <><span className="spinner"/>Processing…</> : 'Run'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function QuestionBankPage() {
   const navigate = useNavigate();
   const [questions, setQuestions] = useState([]);
@@ -119,6 +203,8 @@ export default function QuestionBankPage() {
     }
   };
 
+  const [showRepair, setShowRepair] = useState(false);
+
   return (
     <div className={styles.page}>
       <div className={styles.header}>
@@ -137,12 +223,19 @@ export default function QuestionBankPage() {
               ? `⏳ Generating… ${backfillProgress ? `(${backfillProgress.generated} done, ${backfillProgress.remaining} left)` : ''}`
               : '💡 Generate Missing Explanations'}
           </Button>
+          <Button variant="ghost" onClick={() => setShowRepair(true)}>
+            🖼️ Fix / Re-crop Diagrams
+          </Button>
           <Button variant="ghost" onClick={() => navigate('/admin/questions/new')}>
             ✦ AI Generate
           </Button>
           <Button onClick={() => navigate('/admin/questions/new')}>+ New Question</Button>
         </div>
       </div>
+
+      {showRepair && (
+        <RepairDiagramsModal subjects={subjects} onClose={() => setShowRepair(false)} onDone={load} />
+      )}
 
       {/* Filters */}
       <div className={styles.filterBar}>

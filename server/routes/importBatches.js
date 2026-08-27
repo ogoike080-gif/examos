@@ -53,7 +53,9 @@ async function cropDiagram(buffer, box) {
     const meta = await img.metadata();
     if (!meta.width || !meta.height) return null;
 
-    const pad = 3;
+    // 8pt margin, not 3 — see routes/import.js for why. Cropping too tight
+    // is unrecoverable; a little extra whitespace around the figure is not.
+    const pad = 8;
     const xMin = Math.max(0, box.x_min - pad);
     const yMin = Math.max(0, box.y_min - pad);
     const xMax = Math.min(100, box.x_max + pad);
@@ -62,15 +64,39 @@ async function cropDiagram(buffer, box) {
 
     const left = Math.round((xMin / 100) * meta.width);
     const top = Math.round((yMin / 100) * meta.height);
-    const width = Math.round(((xMax - xMin) / 100) * meta.width);
-    const height = Math.round(((yMax - yMin) / 100) * meta.height);
+    // Clamp so rounding never pushes the extract box past the image bounds.
+    const width = Math.min(Math.round(((xMax - xMin) / 100) * meta.width), meta.width - left);
+    const height = Math.min(Math.round(((yMax - yMin) / 100) * meta.height), meta.height - top);
     if (width < 20 || height < 20) return null;
 
     fs.mkdirSync(DIAGRAMS_DIR, { recursive: true });
     const filename = `${uuidv4()}.jpg`;
+    // A raw extract() straight from a phone photo of a printed page looks
+    // exactly like what it is — dull/grayish "paper" background instead of
+    // clean white, soft/blurry edges, whatever tilt was in the original
+    // shot. None of that is fixable by cropping tighter; it needs actual
+    // image cleanup. This is deliberately cheap, deterministic, sharp-only
+    // processing (no AI call, no added cost/quota) applied to every single
+    // diagram crop by default — the opt-in AI "Reconstruct Diagram" tool
+    // (reconstructDiagramSVG, used from the review screen) is still there
+    // for cases that need a full vector redraw, but most diagrams just need
+    // this to stop looking like a screenshot of a photograph:
+    //   - rotate(): reads embedded EXIF orientation so a sideways phone
+    //     photo doesn't end up as a sideways diagram
+    //   - normalize(): stretches the tonal range so the page's off-white/
+    //     gray scan background actually reads as white, and lines that were
+    //     faint from bad lighting get real contrast
+    //   - sharpen(): counters the soft, slightly-out-of-focus look that
+    //     phone-camera JPEG compression leaves on fine diagram lines/labels
+    //   - gamma(): lifts shadow detail a touch without blowing out
+    //     highlights, so shaded regions in the diagram stay legible
     await sharp(buffer)
       .extract({ left, top, width, height })
-      .jpeg({ quality: 88 })
+      .rotate()
+      .normalize()
+      .gamma(1.05)
+      .sharpen({ sigma: 0.6 })
+      .jpeg({ quality: 92, mozjpeg: true })
       .toFile(path.join(DIAGRAMS_DIR, filename));
 
     return `/uploads/diagrams/${filename}`;
