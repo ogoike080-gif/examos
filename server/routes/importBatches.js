@@ -323,7 +323,17 @@ router.post('/zip', authenticate, authorize('superadmin', 'admin', 'examiner'), 
           confidence: q.confidence || 'medium',
           source_photo: q.source_photo,
           source_number: q.number ?? null,
-          media_url: q.has_diagram ? (q.diagram_url || (photoImageUrls[q.source_photo] || {}).url || null) : null,
+          // Was: falls back to the ENTIRE raw source page photo when
+          // cropDiagram() fails — meaning a student could end up seeing the
+          // whole scanned exam page: unrelated questions, other students'
+          // handwritten marks, everything, dumped in as "the diagram" for
+          // one specific question. That's worse than showing nothing.
+          // diagram_crop_failed already exists specifically to flag this
+          // case for the "Repair Broken Diagrams" admin tool — showing null
+          // here (no image) is what actually leans on that flag correctly,
+          // instead of quietly papering over the failure with an
+          // inappropriate fallback image.
+          media_url: q.has_diagram ? (q.diagram_url || null) : null,
           diagram_crop_failed: !!q.diagram_crop_failed,
           answer_from_key_page: false,
           answer_confirmed_twice: false,

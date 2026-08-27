@@ -844,7 +844,22 @@ async function cropDiagram(buffer, box) {
     if (width < 20 || height < 20) return null;
     fs.mkdirSync(DIAGRAMS_DIR, { recursive: true });
     const filename = `${uuidv4()}.jpg`;
-    await sharp(buffer).extract({ left, top, width, height }).jpeg({ quality: 88 }).toFile(path.join(DIAGRAMS_DIR, filename));
+    // Same cleanup as routes/importBatches.js's cropDiagram — this was a
+    // separate, duplicate copy of that function that never got the same
+    // fix: a raw extract() from a phone photo looks exactly like what it
+    // is (dull scan-gray background, soft edges, whatever tilt was in the
+    // shot). rotate() reads EXIF orientation, normalize() stretches
+    // contrast so the background actually reads white, sharpen() counters
+    // phone-camera JPEG softness — no AI call, no added cost, applied to
+    // every repaired diagram by default.
+    await sharp(buffer)
+      .extract({ left, top, width, height })
+      .rotate()
+      .normalize()
+      .gamma(1.05)
+      .sharpen({ sigma: 0.6 })
+      .jpeg({ quality: 92, mozjpeg: true })
+      .toFile(path.join(DIAGRAMS_DIR, filename));
     return `/uploads/diagrams/${filename}`;
   } catch (err) {
     console.error('repair diagram crop failed:', err.message);
