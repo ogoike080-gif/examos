@@ -5,7 +5,7 @@ const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 const { getDB } = require('../models/db');
 const { authenticate, optionalAuthenticate, authorize } = require('../middleware/auth');
-const { generateQuestionsWithAI, extractQuestionsFromImage, explainAnswer, parseGeminiError, EXPLANATION_BLOCKED_MARKER } = require('../ai/questionGenerator');
+const { generateQuestionsWithAI, extractQuestionsFromImage, explainAnswer, parseGeminiError, EXPLANATION_BLOCKED_MARKER, solveObjectiveQuestion } = require('../ai/questionGenerator');
 const { cleanMathNotation, cleanQuestionFields } = require('../utils/mathNotation');
 const { FREE_QUESTION_LIMIT, hasActivePaidPlan, getRemainingQuota, consumeQuota } = require('../services/freeTrial');
 const AdmZip = require('adm-zip');
@@ -488,7 +488,7 @@ router.post('/:id/generate-explanation', optionalAuthenticate, async (req, res) 
   try {
     const db = getDB();
     const [rows] = await db.execute(
-      `SELECT q.id, q.question_text, q.question_type, q.options, q.correct_answers, q.explanation, s.name AS subject_name
+      `SELECT q.id, q.question_text, q.question_type, q.options, q.correct_answers, q.explanation, q.tags, s.name AS subject_name
        FROM questions q LEFT JOIN subjects s ON q.subject_id = s.id
        WHERE q.id = ?`,
       [req.params.id]
@@ -500,21 +500,57 @@ router.post('/:id/generate-explanation', optionalAuthenticate, async (req, res) 
       return res.json({ explanation: question.explanation, cached: true });
     }
 
+    let correct_answers = Array.isArray(question.correct_answers) ? question.correct_answers
+      : parseAnswerList(question.correct_answers);
     const options = Array.isArray(question.options) ? question.options
       : (() => { try { return JSON.parse(question.options || '[]'); } catch { return []; } })();
-    const correct_answers = Array.isArray(question.correct_answers) ? question.correct_answers
-      : parseAnswerList(question.correct_answers);
 
-    // Essay/theory questions have no single correct_answers value by design
-    // (there's nothing to "match" against) — explainAnswer handles that case
-    // with a model-answer-style explanation instead. Only genuinely block
-    // objective-type questions that are missing a recorded answer, since
-    // there's nothing true to explain from there.
+    // A published question missing its correct answer used to just fail
+    // here with a 400 — "no matter how easy" a question was, if nobody had
+    // gone back and verified/filled in its answer, it could never get an
+    // explanation, full stop. Auto-solve it right here instead: same
+    // solver used by the import review screen's "AI-Solve Missing
+    // Answers", just triggered lazily now, the first time someone actually
+    // needs this question explained, rather than requiring an admin to
+    // have already caught it. One AI call does double duty — it solves
+    // AND shows its full working — so solution_steps IS the explanation,
+    // no second call needed.
+    let autoSolvedExplanation = null;
     if (!correct_answers.length && question.question_type !== 'essay') {
-      return res.status(400).json({ error: 'This question has no recorded correct answer to explain from' });
+      if (!options.length) {
+        return res.status(400).json({ error: 'This question has no recorded correct answer to explain from' });
+      }
+      const solved = await solveObjectiveQuestion({
+        question_text: question.question_text,
+        options,
+        subject: question.subject_name,
+      });
+      if (!solved.solvable || !solved.correct_answer_letter) {
+        return res.status(400).json({
+          error: 'This question has no recorded correct answer, and it couldn\u2019t be reliably auto-solved either (' + (solved.reason || 'AI was not confident') + '). It needs a human to verify the correct answer first.',
+        });
+      }
+      const letterIndex = solved.correct_answer_letter.toUpperCase().charCodeAt(0) - 65;
+      const solvedAnswerText = options[letterIndex];
+      if (!solvedAnswerText) {
+        return res.status(400).json({ error: 'This question has no recorded correct answer to explain from' });
+      }
+      correct_answers = [solvedAnswerText];
+      autoSolvedExplanation = solved.solution_steps || null;
+      // Quietly fill in the answer this question was missing — tagged so
+      // admins reviewing the question bank can see it was AI-derived
+      // rather than confirmed from an answer key, same convention used by
+      // the import pipeline's own auto-solve.
+      let tags = [];
+      try { tags = Array.isArray(question.tags) ? question.tags : JSON.parse(question.tags || '[]'); } catch {}
+      if (!tags.includes('ai_solved_answer')) tags.push('ai_solved_answer');
+      await db.execute(
+        'UPDATE questions SET correct_answers=?, tags=? WHERE id=?',
+        [JSON.stringify(correct_answers), JSON.stringify(tags), question.id]
+      );
     }
 
-    const explanation = await explainAnswer({
+    const explanation = autoSolvedExplanation || await explainAnswer({
       question_text: question.question_text,
       options,
       correct_answers,
