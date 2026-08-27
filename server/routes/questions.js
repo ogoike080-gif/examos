@@ -549,7 +549,15 @@ router.post('/backfill-explanations', authenticate, async (req, res) => {
     const limit = Math.max(1, Math.min(50, Number(req.body?.limit) || 15));
     const { subject_id, exam_type, ids } = req.body || {};
 
-    let where = "q.is_active = TRUE AND (q.explanation IS NULL OR q.explanation = '')";
+    // Broaden the SQL fetch beyond a strict empty check to also catch the
+    // isBareAnswerLetter placeholder pattern ("A", "Option A", "The answer is
+    // A" — see that function's comment above) — SQL can't run that exact JS
+    // check, so pull in anything short enough to PLAUSIBLY be one of those
+    // (a real explanation is essentially never this short) and filter
+    // precisely in JS below. This keeps the two "does this need a real
+    // explanation" checks in this file — this one and the single-question
+    // route above — actually consistent with each other.
+    let where = "q.is_active = TRUE AND (q.explanation IS NULL OR CHAR_LENGTH(TRIM(q.explanation)) <= 20)";
     const params = [];
     if (subject_id) { where += ' AND q.subject_id = ?'; params.push(subject_id); }
     if (exam_type)  { where += ' AND JSON_CONTAINS(q.exam_types, ?)'; params.push(JSON.stringify(exam_type)); }
@@ -558,12 +566,34 @@ router.post('/backfill-explanations', authenticate, async (req, res) => {
       params.push(...ids);
     }
 
-    const [rows] = await db.execute(
-      `SELECT q.id, q.question_text, q.question_type, q.options, q.correct_answers, s.name AS subject_name
+    // Overfetch a little beyond `limit` before the precise JS filter below,
+    // since the broadened SQL condition above can match some short-but-real
+    // explanations that isBareAnswerLetter will correctly rule back out —
+    // without this, a batch could come back smaller than `limit` even though
+    // plenty of genuinely-missing questions remain.
+    const [candidateRows] = await db.execute(
+      `SELECT q.id, q.question_text, q.question_type, q.options, q.correct_answers, q.explanation, s.name AS subject_name
        FROM questions q LEFT JOIN subjects s ON q.subject_id = s.id
-       WHERE ${where} LIMIT ${limit}`,
+       WHERE ${where} LIMIT ${limit * 4}`,
       params
     );
+    const rows = candidateRows
+      .filter(q => !q.explanation || isBareAnswerLetter(q.explanation))
+      .slice(0, limit);
+
+    // Precise count of what's actually left, using the same JS filter as the
+    // batch fetch above rather than the broader SQL condition alone (which
+    // over-counts — it also matches short-but-genuine explanations that
+    // isBareAnswerLetter correctly rules back out). Capped at 2000 candidates
+    // — this only needs to be "accurate enough for a progress indicator", not
+    // exact against an unbounded table, and the loop terminates correctly
+    // either way via the generated===0 stop condition below.
+    const countRemaining = async () => {
+      const [candidates] = await db.execute(
+        `SELECT q.explanation FROM questions q WHERE ${where} LIMIT 2000`, params
+      );
+      return candidates.filter(q => !q.explanation || isBareAnswerLetter(q.explanation)).length;
+    };
 
     let generated = 0, failed = 0;
     for (const question of rows) {
@@ -588,7 +618,7 @@ router.post('/backfill-explanations', authenticate, async (req, res) => {
           // Stop the whole batch here — every remaining question in it (and
           // any future call today) will fail the same way. Report what's
           // left so the caller knows to stop looping and try again later.
-          const [[{ remaining }]] = await db.execute(`SELECT COUNT(*) as remaining FROM questions q WHERE ${where}`, params);
+          const remaining = await countRemaining();
           return res.json({ generated, failed, remaining, quota_exceeded: true, retry_delay_seconds: geminiErr.retryDelaySeconds || null });
         }
         console.error(`backfill-explanations: failed on question ${question.id}:`, err.message);
@@ -596,7 +626,7 @@ router.post('/backfill-explanations', authenticate, async (req, res) => {
       }
     }
 
-    const [[{ remaining }]] = await db.execute(`SELECT COUNT(*) as remaining FROM questions q WHERE ${where}`, params);
+    const remaining = await countRemaining();
     res.json({ generated, failed, remaining, quota_exceeded: false });
   } catch (err) {
     console.error('POST /questions/backfill-explanations error:', err.message);
