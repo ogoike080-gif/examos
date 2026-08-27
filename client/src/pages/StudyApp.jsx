@@ -373,7 +373,7 @@ function TheoryQuestionsBrowser({ examType, subject }) {
                         <MathText text={q.question_text} inline />
                       </div>
                       {q.media_url && (
-                        <img src={q.media_url} alt="Question diagram" style={{ display:'block', maxWidth:'100%', maxHeight:220, borderRadius:8, border:'1px solid #E2E8F0', marginBottom:8 }} />
+                        <img src={q.media_url} alt="Question diagram" style={{ display:'block', maxWidth:'100%', width:'auto', height:'auto', maxHeight:280, objectFit:'contain', borderRadius:8, border:'1px solid #E2E8F0', marginBottom:8 }} />
                       )}
                       {q.explanation && (
                         revealed.has(q.id) ? (
@@ -926,7 +926,7 @@ function ExamScreen({ config, onFinish }) {
             <div style={{ background:'#fff', border:'1px solid #E2E8F0', borderRadius:12, padding:'20px 22px', marginBottom:18, fontSize:15, lineHeight:1.85, color:'#1E293B', fontWeight:500, boxShadow:'0 1px 4px rgba(0,0,0,0.05)' }}>
               <MathText text={q.question_text} />
               {q.media_url && !lowData && (
-                <img src={q.media_url} alt="Question diagram" style={{ display:'block', maxWidth:'100%', maxHeight:340, marginTop:14, borderRadius:10, border:'1px solid #E2E8F0' }} />
+                <img src={q.media_url} alt="Question diagram" style={{ display:'block', maxWidth:'100%', width:'auto', height:'auto', maxHeight:400, objectFit:'contain', marginTop:14, borderRadius:10, border:'1px solid #E2E8F0' }} />
               )}
               {q.media_url && lowData && (
                 <div style={{ marginTop:14, padding:'10px 14px', background:'#F1F5F9', borderRadius:10, border:'1px dashed #CBD5E1', fontSize:12.5, color:'#64748B' }}>
@@ -1111,7 +1111,7 @@ function MobileExamScreen({
         <div style={{ background:'#1E293B', border:'1px solid rgba(255,255,255,0.08)', borderRadius:16, padding:'18px 18px', marginBottom:16, fontSize:17, lineHeight:1.65, color:'#F1F5F9', fontWeight:500 }}>
           <MathText text={q.question_text} />
           {q.media_url && !lowData && (
-            <img src={q.media_url} alt="Question diagram" style={{ display:'block', maxWidth:'100%', maxHeight:280, marginTop:14, borderRadius:10, border:'1px solid rgba(255,255,255,0.1)' }} />
+            <img src={q.media_url} alt="Question diagram" style={{ display:'block', maxWidth:'100%', width:'auto', height:'auto', maxHeight:340, objectFit:'contain', marginTop:14, borderRadius:10, border:'1px solid rgba(255,255,255,0.1)' }} />
           )}
           {q.media_url && lowData && (
             <div style={{ marginTop:14, padding:'10px 14px', background:'rgba(255,255,255,0.05)', borderRadius:10, border:'1px dashed rgba(255,255,255,0.15)', fontSize:12.5, color:'rgba(255,255,255,0.5)' }}>
