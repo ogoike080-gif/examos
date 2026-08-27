@@ -53,21 +53,6 @@ export const questionAPI = {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
   },
-  // Re-processes a zip of the original source-paper photos and patches the
-  // media_url of matching live questions. force=true also re-crops rows
-  // whose image already exists (use this to fix clipped/too-tight diagrams,
-  // not just missing ones) — see routes/questions.js repair-diagrams.
-  repairDiagrams: ({ zip, examBody, year, subjectId, force }) => {
-    const fd = new FormData();
-    fd.append('zip', zip);
-    fd.append('exam_body', examBody);
-    fd.append('year', year);
-    if (subjectId) fd.append('subject_id', subjectId);
-    if (force) fd.append('force', 'true');
-    return axios.post(`${API}/questions/repair-diagrams`, fd, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    });
-  },
 };
 
 // ── PROCTOR ───────────────────────────────────────────────────

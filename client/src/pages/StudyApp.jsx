@@ -16,17 +16,6 @@ function safeParseArray(v) {
   try { const p = JSON.parse(v); return Array.isArray(p)?p:[]; } catch { return []; }
 }
 
-// Mock/Practice/Study/Adaptive here are all built around answer-choice
-// questions (radio-select, then check against correct_answers) — a theory
-// question with no options silently rendered as an empty, unanswerable
-// blank in that flow. Rather than try to make one UI handle both, theory
-// questions are excluded from these sessions entirely; they get their own
-// year-grouped read-through list on the setup screen instead (see
-// TheoryQuestionsBrowser below).
-function isAnswerable(q) {
-  return safeParseArray(q.options).length > 0;
-}
-
 function formatTime(s) {
   const h = Math.floor(s/3600), m = Math.floor((s%3600)/60), sec = s%60;
   if (h>0) return `${h}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;
@@ -212,12 +201,6 @@ function SetupScreen({ onStart }) {
           </div>
         </div>
 
-        {/* Theory / essay questions — these have no multiple-choice options,
-            so they can't be answered inside Mock/Practice/Study/Adaptive
-            (those modes are all radio-select). Instead they're browsable
-            here, grouped by year, for reading through/studying directly. */}
-        <TheoryQuestionsBrowser examType={examType} subject={subject} />
-
         {/* Options row */}
         <div style={{ background:'#fff', borderRadius:12, padding:'16px 20px', marginBottom:16, boxShadow:'0 1px 4px rgba(0,0,0,0.08)', display:'flex', alignItems:'center', justifyContent:'space-between' }}>
           <div style={{ fontSize:13, fontWeight:600, color:'#1E293B' }}>Shuffle Questions</div>
@@ -274,130 +257,6 @@ function SetupScreen({ onStart }) {
   );
 }
 
-// ── THEORY QUESTIONS BROWSER ──────────────────────────────────
-// Groups no-option (essay/theory) questions by year for the given
-// subject + exam type, so they can be read/studied directly rather than
-// attempted through the MCQ session flow they don't fit into. Always
-// fetches across every year (ignores the Year selector above it) since
-// the point is exactly to list them "on every year".
-function TheoryQuestionsBrowser({ examType, subject }) {
-  const [open, setOpen] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
-  const [questions, setQuestions] = useState(null); // null = not yet loaded
-  const [openYears, setOpenYears] = useState(() => new Set());
-  const [revealed, setRevealed] = useState(() => new Set());
-
-  useEffect(() => {
-    // Collapse and drop stale results whenever the scope changes — the
-    // list only (re)loads once the section is actually opened.
-    setQuestions(null);
-    setOpenYears(new Set());
-    setRevealed(new Set());
-  }, [examType, subject]);
-
-  const load = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const params = { type: 'essay', limit: 200 };
-      if (subject !== 'All') params.subject = subject;
-      if (examType !== 'CUSTOM') params.exam_type = examType;
-      const res = await axios.get(`${API}/questions`, { params });
-      setQuestions(res.data.questions || []);
-    } catch {
-      setError("Couldn't load theory questions — try again.");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const toggle = () => {
-    const next = !open;
-    setOpen(next);
-    if (next && questions === null && !loading) load();
-  };
-
-  // Year lives in `tags` (see routes/questions.js) — pull out the first
-  // 4-digit tag that looks like a year; anything without one groups under
-  // "Undated" rather than getting silently dropped.
-  const yearOf = (q) => {
-    const tags = safeParseArray(q.tags);
-    const y = tags.find(t => /^(19|20)\d{2}$/.test(String(t).trim()));
-    return y ? String(y).trim() : 'Undated';
-  };
-
-  const groups = {};
-  if (questions) {
-    for (const q of questions) {
-      const y = yearOf(q);
-      (groups[y] = groups[y] || []).push(q);
-    }
-  }
-  const years = Object.keys(groups).sort((a, b) => (a === 'Undated' ? 1 : b === 'Undated' ? -1 : b.localeCompare(a)));
-
-  const toggleYear = (y) => setOpenYears(s => { const n = new Set(s); n.has(y) ? n.delete(y) : n.add(y); return n; });
-  const toggleReveal = (id) => setRevealed(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
-
-  return (
-    <div style={{ background:'#fff', borderRadius:12, overflow:'hidden', marginBottom:16, boxShadow:'0 1px 4px rgba(0,0,0,0.08)' }}>
-      <button onClick={toggle} style={{ width:'100%', padding:'14px 20px', background:'none', border:'none', cursor:'pointer', display:'flex', justifyContent:'space-between', alignItems:'center', fontFamily:"'Inter',sans-serif" }}>
-        <span style={{ fontSize:13, fontWeight:700, color:'#1E3A5F' }}>📚 Theory Questions (by year){questions ? ` — ${questions.length}` : ''}</span>
-        <span style={{ fontSize:12, color:'#94A3B8', transform:open?'rotate(180deg)':'none', transition:'transform 0.2s' }}>▼</span>
-      </button>
-      {open && (
-        <div style={{ padding:'0 20px 16px', borderTop:'1px solid #F1F5F9' }}>
-          {loading && (
-            <div style={{ padding:'16px 0', fontSize:13, color:'#94A3B8' }}>Loading…</div>
-          )}
-          {error && (
-            <div style={{ padding:'12px 0', fontSize:13, color:'#DC2626' }}>{error}</div>
-          )}
-          {!loading && !error && questions && questions.length === 0 && (
-            <div style={{ padding:'16px 0', fontSize:13, color:'#94A3B8' }}>
-              No theory questions found for {subject === 'All' ? 'any subject' : subject}{examType !== 'CUSTOM' ? ` · ${examType}` : ''}.
-            </div>
-          )}
-          {!loading && !error && years.map(y => (
-            <div key={y} style={{ borderBottom:'1px solid #F1F5F9', paddingTop:12 }}>
-              <button onClick={() => toggleYear(y)} style={{ width:'100%', background:'none', border:'none', cursor:'pointer', display:'flex', justifyContent:'space-between', alignItems:'center', padding:'4px 0 12px', fontFamily:"'Inter',sans-serif" }}>
-                <span style={{ fontSize:13, fontWeight:700, color:'#1E293B' }}>{y}<span style={{ fontWeight:500, color:'#94A3B8' }}> · {groups[y].length} question{groups[y].length!==1?'s':''}</span></span>
-                <span style={{ fontSize:11, color:'#94A3B8', transform:openYears.has(y)?'rotate(180deg)':'none', transition:'transform 0.2s' }}>▼</span>
-              </button>
-              {openYears.has(y) && (
-                <div style={{ display:'flex', flexDirection:'column', gap:10, paddingBottom:14 }}>
-                  {groups[y].map((q, i) => (
-                    <div key={q.id} style={{ background:'#F8FAFC', border:'1px solid #E2E8F0', borderRadius:10, padding:'12px 14px' }}>
-                      <div style={{ fontSize:13, color:'#1E293B', lineHeight:1.6, marginBottom: (q.explanation || revealed.has(q.id)) ? 8 : 0 }}>
-                        <b style={{ color:'#94A3B8', marginRight:6 }}>{q.question_number ?? i+1}.</b>
-                        <MathText text={q.question_text} inline />
-                      </div>
-                      {q.media_url && (
-                        <img src={q.media_url} alt="Question diagram" style={{ display:'block', maxWidth:'100%', maxHeight:220, borderRadius:8, border:'1px solid #E2E8F0', marginBottom:8 }} />
-                      )}
-                      {q.explanation && (
-                        revealed.has(q.id) ? (
-                          <div style={{ fontSize:12.5, color:'#334155', lineHeight:1.6, borderTop:'1px dashed #E2E8F0', paddingTop:8 }}>
-                            <MathText text={q.explanation} inline />
-                          </div>
-                        ) : (
-                          <button onClick={() => toggleReveal(q.id)} style={{ fontSize:12, fontWeight:700, color:'#2563EB', background:'none', border:'none', cursor:'pointer', padding:0 }}>
-                            Show answer / explanation
-                          </button>
-                        )
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
 // ── SAVE FOR OFFLINE ─────────────────────────────────────────
 function SaveOfflineButton({ config }) {
   const [state, setState] = useState('idle'); // idle | saving | explaining | saved | error | already
@@ -417,9 +276,7 @@ function SaveOfflineButton({ config }) {
       if (config.examType !== 'CUSTOM') params.exam_type = config.examType;
       if (config.year !== 'All Years') params.year = config.year;
       const res = await axios.get(`${API}/questions`, { params });
-      const qs = (res.data.questions || [])
-        .map(q => ({ ...q, options: safeParseArray(q.options) }))
-        .filter(isAnswerable);
+      const qs = (res.data.questions || []).map(q => ({ ...q, options: safeParseArray(q.options) }));
       if (!qs.length) return setState('error');
 
       // The whole point of "save for offline" is being able to study with
@@ -662,7 +519,7 @@ function ExamScreen({ config, onFinish }) {
     if (!navigator.onLine) {
       const cached = readOfflineCache(cacheKey);
       if (cached?.length) {
-        let qs = cached.filter(isAnswerable);
+        let qs = cached;
         if (config.shuffle) qs = [...qs].sort(() => Math.random() - 0.5);
         setQuestions(qs.slice(0, config.count));
         setUsingOfflineCache(true);
@@ -682,9 +539,7 @@ function ExamScreen({ config, onFinish }) {
       if (config.examType !== 'CUSTOM') params.exam_type = config.examType;
       if (config.year !== 'All Years') params.year = config.year;
       const res = await axios.get(`${API}/questions`, { params });
-      let qs = (res.data.questions || [])
-        .map(q => ({ ...q, options: safeParseArray(q.options) }))
-        .filter(isAnswerable); // theory/essay questions have no options — see isAnswerable above
+      let qs = (res.data.questions || []).map(q => ({ ...q, options: safeParseArray(q.options) }));
 
       if (config.mode === 'adaptive' && qs.length > 0) {
         const pool = { easy: [], medium: [], hard: [] };
