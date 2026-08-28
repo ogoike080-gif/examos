@@ -361,7 +361,12 @@ Rules:
 - Many exam-paper photos use TWO OR THREE COLUMNS of numbered questions side by side. Read the ENTIRE left-most column first, top to bottom, before moving to the next column to its right. Do not skip the first one or two items near the top of a column — they are easy to miss and just as important as the rest. Before finishing, count the questions you found and check the numbers form a continuous, unbroken sequence (1, 2, 3, 4...) with no gaps — if a number is missing, go back and look for it before submitting your answer.
 - Never invent a number — use exactly what's printed on the page. If a page has no visible numbering at all, use your best sequential guess but set confidence to "low".
 - Never guess a correct answer or invent an explanation that isn't actually shown on the page.
-- For any mathematical content — fractions, exponents, roots, angles, algebraic expressions, equations, Greek letters, inequalities, matrices — write it as LaTeX wrapped in single dollar signs, e.g. $x^2 + 3x - 4 = 0$, $\\frac{1}{2}$, $30^\\circ$, $\\sqrt{25}$. This gets rendered with a real math typesetting engine, so correct LaTeX syntax matters more than it would in plain text. Leave ordinary non-mathematical text outside the dollar signs.`;
+- A multi-part question (parts (a), (b), (c)... or (i), (ii), (iii)... under one shared number and one shared prompt/dataset) is ONE question, not several. Put the entire thing — the shared setup plus every lettered/numbered part — into a single question_text for that one number. Never extract an individual part like "(b)(ii) find the 80th percentile" as if it were its own standalone question with its own number and options — it has no meaning on its own without the shared data/diagram the real question provides, and doing this produces an unanswerable fragment.
+- For any mathematical content — fractions, exponents, roots, angles, algebraic expressions, equations, Greek letters, inequalities, matrices — write it as LaTeX wrapped in single dollar signs, e.g. $x^2 + 3x - 4 = 0$, $\\frac{1}{2}$, $30^\\circ$, $\\sqrt{25}$. This gets rendered with a real math typesetting engine, so correct LaTeX syntax matters more than it would in plain text. Leave ordinary non-mathematical text outside the dollar signs.
+- For a data table (frequency table, grouped data, etc.) that's part of the question text rather than a separate figure: NEVER use LaTeX table syntax like \\begin{tabular}, \\hline, or \\\\ as row separators — none of that renders here, it will show up as broken literal text. Instead write the table as plain readable text, one row per line, e.g.:
+Weekly profit (N): 1-10, 11-20, 21-30, 31-40, 41-50, 51-60
+Frequency: 6, 6, 12, 11, 10, 5
+  If the table is large/complex or is really a printed figure rather than something you can cleanly re-type, set has_diagram true and give it a diagram_box instead of trying to transcribe it as text.`;
 
   let response;
   try {
@@ -411,6 +416,32 @@ Rules:
   // Preserve $...$ LaTeX markup as-is — MathText.jsx renders it with KaTeX on
   // the frontend now, so raw math notation from the model is exactly what we
   // want stored, not a flattened Unicode approximation.
+  //
+  // Defensive cleanup for one specific failure mode: even with the prompt's
+  // explicit instruction against it, the model can still occasionally emit
+  // LaTeX table syntax (\begin{tabular}, \hline, \\ row separators) for a
+  // data table — none of that is math-mode KaTeX, so it doesn't render, it
+  // just shows up as broken literal text to a student. Strip it down to
+  // plain readable text as a safety net, rather than trusting every single
+  // extraction to follow the prompt correctly.
+  const cleanTableSyntax = (text) => {
+    if (typeof text !== 'string' || !text.includes('tabular')) return text;
+    return text
+      .replace(/\\begin\{tabular\}(\{[^}]*\})?/g, '')
+      .replace(/\\end\{tabular\}/g, '')
+      .replace(/\\hline/g, '')
+      .replace(/\\\\/g, '\n')
+      .replace(/&/g, ' | ')
+      .replace(/[ \t]+\n/g, '\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+  };
+  if (Array.isArray(parsed.questions)) {
+    parsed.questions.forEach(q => { if (q.question_text) q.question_text = cleanTableSyntax(q.question_text); });
+  }
+  if (Array.isArray(parsed.answers)) {
+    parsed.answers.forEach(a => { if (a.solution_text) a.solution_text = cleanTableSyntax(a.solution_text); });
+  }
   return parsed;
 }
 
