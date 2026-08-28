@@ -45,6 +45,7 @@ export const questionAPI = {
   aiGenerate: (data) => axios.post(`${API}/questions/ai-generate`, data),
   generateExplanation: (id) => axios.post(`${API}/questions/${id}/generate-explanation`),
   backfillExplanations: (params) => axios.post(`${API}/questions/backfill-explanations`, params || {}),
+  backfillCorrectAnswers: (params) => axios.post(`${API}/questions/backfill-correct-answers`, params || {}),
   subjects: () => axios.get(`${API}/questions/subjects/list`),
   uploadImage: (file) => {
     const fd = new FormData();

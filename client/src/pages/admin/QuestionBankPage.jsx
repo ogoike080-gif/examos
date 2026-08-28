@@ -164,41 +164,54 @@ export default function QuestionBankPage() {
   const [backfilling, setBackfilling] = useState(false);
   const [backfillProgress, setBackfillProgress] = useState(null); // { generated, remaining }
 
-  const runBackfill = async () => {
-    setBackfilling(true);
-    let totalGenerated = 0;
+  // Same loop-until-done pattern as runBackfill below, but for questions
+  // that made it all the way to publish with an empty correct_answers —
+  // the thing that makes every option show as "wrong" no matter which one a
+  // student picks (nothing can ever match an empty answer list), and makes
+  // Generate Missing Explanations correctly refuse them too (there's
+  // nothing recorded to explain the reasoning to). Deliberately meant to be
+  // run BEFORE Generate Missing Explanations — solving an answer here also
+  // saves a full explanation in the same AI call, so anything fixed by this
+  // won't need a second call from that one right after.
+  const [answerFixing, setAnswerFixing] = useState(false);
+  const [answerFixProgress, setAnswerFixProgress] = useState(null); // { fixed, remaining }
+
+  const runAnswerFix = async () => {
+    setAnswerFixing(true);
+    let totalFixed = 0;
     try {
       // eslint-disable-next-line no-constant-condition
       while (true) {
-        const res = await questionAPI.backfillExplanations({ limit: 15 });
-        const { generated, remaining, quota_exceeded, retry_delay_seconds } = res.data;
-        totalGenerated += generated;
-        setBackfillProgress({ generated: totalGenerated, remaining });
+        const res = await questionAPI.backfillCorrectAnswers({ limit: 15 });
+        const { fixed, remaining, quota_exceeded, retry_delay_seconds } = res.data;
+        totalFixed += fixed;
+        setAnswerFixProgress({ fixed: totalFixed, remaining });
 
         if (quota_exceeded) {
           toast(
-            `Generated ${totalGenerated} explanation(s). AI quota reached — ${remaining} question(s) still need one; run this again ${retry_delay_seconds ? `in about ${retry_delay_seconds}s` : 'later'}.`,
+            `Fixed ${totalFixed} question(s). AI quota reached — ${remaining} still need a recorded answer; run this again ${retry_delay_seconds ? `in about ${retry_delay_seconds}s` : 'later'}.`,
             { icon: '⏳', duration: 8000 }
           );
           break;
         }
         if (remaining === 0) {
-          toast.success(`Done — every question in the bank now has an explanation (${totalGenerated} generated this run).`);
+          toast.success(`Done — every question now has a recorded correct answer (${totalFixed} fixed this run).`);
           break;
         }
-        if (generated === 0) {
-          // Nothing generated and not quota-exceeded — every remaining
-          // question in this filtered set is one explainAnswer can't
-          // handle (e.g. missing a correct answer), not a transient issue.
-          // Stop rather than looping forever on the same unfixable set.
-          toast(`Stopped — ${remaining} question(s) couldn't be explained (likely missing a recorded correct answer). Fix those in Question Bank, then run this again.`, { icon: '⚠️', duration: 8000 });
+        if (fixed === 0) {
+          // Nothing fixed and not quota-exceeded — every remaining question
+          // in this set is genuinely unsolvable from text alone (ambiguous,
+          // needs a diagram, or the AI's own working never matched any of
+          // the given options). Stop rather than looping on the same set
+          // forever; these need a human to fix manually in Question Bank.
+          toast(`Stopped — ${remaining} question(s) couldn't be solved automatically (likely need a diagram, or are ambiguous). Fix those manually in Question Bank.`, { icon: '⚠️', duration: 8000 });
           break;
         }
       }
     } catch (err) {
-      toast.error(err.response?.data?.error || 'Backfill failed');
+      toast.error(err.response?.data?.error || 'Answer fix failed');
     } finally {
-      setBackfilling(false);
+      setAnswerFixing(false);
       load();
     }
   };
@@ -218,6 +231,11 @@ export default function QuestionBankPage() {
               Delete {selected.size} selected
             </Button>
           )}
+          <Button variant="ghost" onClick={runAnswerFix} disabled={answerFixing}>
+            {answerFixing
+              ? `⏳ Fixing… ${answerFixProgress ? `(${answerFixProgress.fixed} done, ${answerFixProgress.remaining} left)` : ''}`
+              : '🔧 Fix Missing Correct Answers'}
+          </Button>
           <Button variant="ghost" onClick={runBackfill} disabled={backfilling}>
             {backfilling
               ? `⏳ Generating… ${backfillProgress ? `(${backfillProgress.generated} done, ${backfillProgress.remaining} left)` : ''}`

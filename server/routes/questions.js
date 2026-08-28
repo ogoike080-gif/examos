@@ -488,7 +488,7 @@ router.post('/:id/generate-explanation', optionalAuthenticate, async (req, res) 
   try {
     const db = getDB();
     const [rows] = await db.execute(
-      `SELECT q.id, q.question_text, q.question_type, q.options, q.correct_answers, q.explanation, q.tags, s.name AS subject_name
+      `SELECT q.id, q.question_text, q.question_type, q.options, q.correct_answers, q.explanation, s.name AS subject_name
        FROM questions q LEFT JOIN subjects s ON q.subject_id = s.id
        WHERE q.id = ?`,
       [req.params.id]
@@ -500,57 +500,21 @@ router.post('/:id/generate-explanation', optionalAuthenticate, async (req, res) 
       return res.json({ explanation: question.explanation, cached: true });
     }
 
-    let correct_answers = Array.isArray(question.correct_answers) ? question.correct_answers
-      : parseAnswerList(question.correct_answers);
     const options = Array.isArray(question.options) ? question.options
       : (() => { try { return JSON.parse(question.options || '[]'); } catch { return []; } })();
+    const correct_answers = Array.isArray(question.correct_answers) ? question.correct_answers
+      : parseAnswerList(question.correct_answers);
 
-    // A published question missing its correct answer used to just fail
-    // here with a 400 — "no matter how easy" a question was, if nobody had
-    // gone back and verified/filled in its answer, it could never get an
-    // explanation, full stop. Auto-solve it right here instead: same
-    // solver used by the import review screen's "AI-Solve Missing
-    // Answers", just triggered lazily now, the first time someone actually
-    // needs this question explained, rather than requiring an admin to
-    // have already caught it. One AI call does double duty — it solves
-    // AND shows its full working — so solution_steps IS the explanation,
-    // no second call needed.
-    let autoSolvedExplanation = null;
+    // Essay/theory questions have no single correct_answers value by design
+    // (there's nothing to "match" against) — explainAnswer handles that case
+    // with a model-answer-style explanation instead. Only genuinely block
+    // objective-type questions that are missing a recorded answer, since
+    // there's nothing true to explain from there.
     if (!correct_answers.length && question.question_type !== 'essay') {
-      if (!options.length) {
-        return res.status(400).json({ error: 'This question has no recorded correct answer to explain from' });
-      }
-      const solved = await solveObjectiveQuestion({
-        question_text: question.question_text,
-        options,
-        subject: question.subject_name,
-      });
-      if (!solved.solvable || !solved.correct_answer_letter) {
-        return res.status(400).json({
-          error: 'This question has no recorded correct answer, and it couldn\u2019t be reliably auto-solved either (' + (solved.reason || 'AI was not confident') + '). It needs a human to verify the correct answer first.',
-        });
-      }
-      const letterIndex = solved.correct_answer_letter.toUpperCase().charCodeAt(0) - 65;
-      const solvedAnswerText = options[letterIndex];
-      if (!solvedAnswerText) {
-        return res.status(400).json({ error: 'This question has no recorded correct answer to explain from' });
-      }
-      correct_answers = [solvedAnswerText];
-      autoSolvedExplanation = solved.solution_steps || null;
-      // Quietly fill in the answer this question was missing — tagged so
-      // admins reviewing the question bank can see it was AI-derived
-      // rather than confirmed from an answer key, same convention used by
-      // the import pipeline's own auto-solve.
-      let tags = [];
-      try { tags = Array.isArray(question.tags) ? question.tags : JSON.parse(question.tags || '[]'); } catch {}
-      if (!tags.includes('ai_solved_answer')) tags.push('ai_solved_answer');
-      await db.execute(
-        'UPDATE questions SET correct_answers=?, tags=? WHERE id=?',
-        [JSON.stringify(correct_answers), JSON.stringify(tags), question.id]
-      );
+      return res.status(400).json({ error: 'This question has no recorded correct answer to explain from' });
     }
 
-    const explanation = autoSolvedExplanation || await explainAnswer({
+    const explanation = await explainAnswer({
       question_text: question.question_text,
       options,
       correct_answers,
@@ -689,6 +653,114 @@ router.post('/backfill-explanations', authenticate, async (req, res) => {
     res.json({ generated, failed, remaining, quota_exceeded: false });
   } catch (err) {
     console.error('POST /questions/backfill-explanations error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/questions/backfill-correct-answers â the "AI-Solve Missing
+// Answers" tool on the import-review screen only ever touches staged_questions,
+// BEFORE publish. There was never an equivalent for questions that made it all
+// the way to the live, published questions table with an empty
+// correct_answers â which is exactly what makes a question show every
+// option as "wrong" no matter which one a student picks (nothing can ever
+// match an empty answer list), AND makes generate-explanation correctly
+// refuse with 400 (there's genuinely nothing recorded to explain the route
+// to). Same loop-until-done design as backfill-explanations above: bounded
+// batches, quota-aware, paced, resumable.
+//
+// solveObjectiveQuestion already produces full worked steps alongside the
+// answer it picks â reused directly as the explanation in the same call,
+// rather than solving the answer here and then asking explainAnswer to
+// explain it separately in a second AI call right after.
+router.post('/backfill-correct-answers', authenticate, authorize('superadmin', 'admin'), async (req, res) => {
+  try {
+    const db = getDB();
+    const { subject_id, exam_type, limit: rawLimit, ids } = req.body || {};
+    const limit = Math.min(Math.max(parseInt(rawLimit, 10) || 15, 1), 50);
+
+    // Broaden the SQL fetch beyond "correct_answers IS NULL" to also catch a
+    // JSON column holding an empty array ('[]') or empty string â both are
+    // "nothing recorded" in effect, but neither IS NULL. Only ever considers
+    // mcq-type questions with at least 2 options: essay questions have no
+    // single correct answer to solve for (see the essay-vs-mcq handling in
+    // explainAnswer/backfill-explanations above), and a question with fewer
+    // than 2 options genuinely can't be multiple-choice-solved.
+    let where = "q.is_active = TRUE AND q.question_type != 'essay' AND JSON_LENGTH(q.options) >= 2 AND (q.correct_answers IS NULL OR JSON_LENGTH(q.correct_answers) = 0)";
+    const params = [];
+    if (subject_id) { where += ' AND q.subject_id = ?'; params.push(subject_id); }
+    if (exam_type)  { where += ' AND JSON_CONTAINS(q.exam_types, ?)'; params.push(JSON.stringify(exam_type)); }
+    if (Array.isArray(ids) && ids.length) {
+      where += ` AND q.id IN (${ids.map(() => '?').join(',')})`;
+      params.push(...ids);
+    }
+
+    const [rows] = await db.execute(
+      `SELECT q.id, q.question_text, q.question_type, q.options, s.name AS subject_name
+       FROM questions q LEFT JOIN subjects s ON q.subject_id = s.id
+       WHERE ${where} LIMIT ${limit}`,
+      params
+    );
+
+    const countRemaining = async () => {
+      const [[{ cnt }]] = await db.execute(`SELECT COUNT(*) as cnt FROM questions q WHERE ${where}`, params);
+      return cnt;
+    };
+
+    let fixed = 0, unsolvable = 0;
+    for (const question of rows) {
+      let options;
+      try { options = Array.isArray(question.options) ? question.options : JSON.parse(question.options || '[]'); } catch { options = []; }
+      if (options.length < 2) { unsolvable++; continue; }
+
+      try {
+        const result = await solveObjectiveQuestion({
+          question_text: question.question_text,
+          options,
+          subject: question.subject_name,
+        });
+
+        const letterIndex = result?.correct_answer_letter
+          ? result.correct_answer_letter.toUpperCase().charCodeAt(0) - 65
+          : -1;
+
+        if (result?.solvable && letterIndex >= 0 && letterIndex < options.length) {
+          const correctAnswerText = options[letterIndex];
+          // solution_steps IS a real explanation, not just working notes â
+          // save it as one too so this doesn't leave the question needing a
+          // second, separate AI call from backfill-explanations right after.
+          if (result.solution_steps) {
+            await db.execute(
+              'UPDATE questions SET correct_answers=?, explanation=? WHERE id=?',
+              [JSON.stringify([correctAnswerText]), result.solution_steps, question.id]
+            );
+          } else {
+            await db.execute(
+              'UPDATE questions SET correct_answers=? WHERE id=?',
+              [JSON.stringify([correctAnswerText]), question.id]
+            );
+          }
+          fixed++;
+        } else {
+          // Genuinely unsolvable (ambiguous, needs a diagram not in the text,
+          // none of the options matched the model's own working) â leave it
+          // for a human to fix manually rather than guessing.
+          unsolvable++;
+        }
+      } catch (err) {
+        const geminiErr = parseGeminiError(err);
+        if (geminiErr.isQuotaExceeded) {
+          const remaining = await countRemaining();
+          return res.json({ fixed, unsolvable, remaining, quota_exceeded: true, retry_delay_seconds: geminiErr.retryDelaySeconds || null });
+        }
+        console.error(`backfill-correct-answers: failed on question ${question.id}:`, err.message);
+        unsolvable++;
+      }
+    }
+
+    const remaining = await countRemaining();
+    res.json({ fixed, unsolvable, remaining, quota_exceeded: false });
+  } catch (err) {
+    console.error('POST /questions/backfill-correct-answers error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
@@ -844,22 +916,7 @@ async function cropDiagram(buffer, box) {
     if (width < 20 || height < 20) return null;
     fs.mkdirSync(DIAGRAMS_DIR, { recursive: true });
     const filename = `${uuidv4()}.jpg`;
-    // Same cleanup as routes/importBatches.js's cropDiagram — this was a
-    // separate, duplicate copy of that function that never got the same
-    // fix: a raw extract() from a phone photo looks exactly like what it
-    // is (dull scan-gray background, soft edges, whatever tilt was in the
-    // shot). rotate() reads EXIF orientation, normalize() stretches
-    // contrast so the background actually reads white, sharpen() counters
-    // phone-camera JPEG softness — no AI call, no added cost, applied to
-    // every repaired diagram by default.
-    await sharp(buffer)
-      .extract({ left, top, width, height })
-      .rotate()
-      .normalize()
-      .gamma(1.05)
-      .sharpen({ sigma: 0.6 })
-      .jpeg({ quality: 92, mozjpeg: true })
-      .toFile(path.join(DIAGRAMS_DIR, filename));
+    await sharp(buffer).extract({ left, top, width, height }).jpeg({ quality: 88 }).toFile(path.join(DIAGRAMS_DIR, filename));
     return `/uploads/diagrams/${filename}`;
   } catch (err) {
     console.error('repair diagram crop failed:', err.message);
