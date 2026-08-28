@@ -597,12 +597,22 @@ Keep each field factually careful — do not invent formulas, dates, or claims y
  * correctness before it goes live, same principle as section 20's content
  * labeling for the exam-prep learning system.
  */
-async function solveObjectiveQuestion({ question_text, options, subject }) {
+// solveObjectiveQuestion optionally accepts a diagram image (imageBase64 +
+// mediaType) alongside the question text — many objective questions are
+// unsolvable from text alone (a Venn diagram, a graph to read values off,
+// a table of figures) because the actual data needed to answer is drawn in
+// the image, not written in the question_text column at all. Without an
+// image, this behaves exactly as before (text-only, on the lite model);
+// passing one switches to the vision model (with the same fallback pattern
+// used in extractQuestionsFromImage above) so the model can actually look
+// at the figure instead of just being told a diagram exists.
+async function solveObjectiveQuestion({ question_text, options, subject, imageBase64, mediaType }) {
   if (!Array.isArray(options) || options.length < 2) {
     return { solvable: false, reason: 'Not enough options to solve against' };
   }
+  const hasImage = !!(imageBase64 && mediaType);
   const prompt = `Solve this ${subject || ''} exam question step by step, then pick the correct option.
-
+${hasImage ? '\nA diagram/figure/table for this question is attached as an image — look at it carefully, it likely contains information (numbers, labels, shapes, values) needed to answer the question that isn\'t written in the question text at all.\n' : ''}
 Question: ${question_text}
 
 Options:
@@ -618,15 +628,26 @@ Respond in JSON only (no markdown, no backticks):
 
 Rules:
 - Only set solvable: true if you can actually work through the problem and confidently arrive at one of the given options.
-- If the question is ambiguous, relies on a diagram/table you can't see from text alone, or none of the options match your computed answer, set solvable: false and explain why in solution_steps.
+- If the question is ambiguous, relies on a diagram/table you can't read clearly${hasImage ? ' even from the attached image' : ' from text alone'}, or none of the options match your computed answer, set solvable: false and explain why in solution_steps.
 - Show real working, not just the answer — this will be reviewed by a teacher before students see it.
 - Write any mathematical content in solution_steps as LaTeX wrapped in single dollar signs, e.g. $x = \\frac{-b \\pm \\sqrt{b^2-4ac}}{2a}$ — this gets rendered with a real math typesetting engine.`;
 
+  const contents = hasImage
+    ? [{ role: 'user', parts: [{ inlineData: { mimeType: mediaType, data: imageBase64 } }, { text: prompt }] }]
+    : prompt;
+
   try {
-    const response = await ai.models.generateContent({
-      model: MODEL,
-      contents: prompt,
-    });
+    let response;
+    if (hasImage) {
+      try {
+        response = await ai.models.generateContent({ model: VISION_MODEL, contents });
+      } catch (visionErr) {
+        console.error(`solveObjectiveQuestion vision model (${VISION_MODEL}) failed, falling back to ${MODEL}:`, visionErr.message);
+        response = await ai.models.generateContent({ model: MODEL, contents });
+      }
+    } else {
+      response = await ai.models.generateContent({ model: MODEL, contents });
+    }
     const result = extractJSON(response.text);
     // Preserve $...$ LaTeX in solution_steps as-is — rendered with KaTeX.
     return result;

@@ -695,11 +695,32 @@ router.post('/backfill-correct-answers', authenticate, authorize('superadmin', '
     }
 
     const [rows] = await db.execute(
-      `SELECT q.id, q.question_text, q.question_type, q.options, s.name AS subject_name
+      `SELECT q.id, q.question_text, q.question_type, q.options, q.media_url, s.name AS subject_name
        FROM questions q LEFT JOIN subjects s ON q.subject_id = s.id
        WHERE ${where} LIMIT ${limit}`,
       params
     );
+
+    // media_url is a public path like /uploads/diagrams/xxx.jpg, served
+    // directly by express.static(uploads) in index.js â that maps 1:1 onto
+    // this same server's uploads/ directory on disk, so the file for a given
+    // question's diagram is always right here, no separate storage lookup
+    // needed. Missing/unreadable files fail soft (undefined) rather than
+    // throwing â a broken diagram link shouldn't block a question that's
+    // otherwise solvable from its text alone.
+    const readDiagramImage = (mediaUrl) => {
+      if (!mediaUrl || !mediaUrl.startsWith('/uploads/')) return undefined;
+      try {
+        const filePath = path.join(__dirname, '..', mediaUrl);
+        const buffer = fs.readFileSync(filePath);
+        const ext = path.extname(filePath).toLowerCase();
+        const mediaType = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
+        return { imageBase64: buffer.toString('base64'), mediaType };
+      } catch (err) {
+        console.error(`backfill-correct-answers: couldn't read diagram at ${mediaUrl}:`, err.message);
+        return undefined;
+      }
+    };
 
     const countRemaining = async () => {
       const [[{ cnt }]] = await db.execute(`SELECT COUNT(*) as cnt FROM questions q WHERE ${where}`, params);
@@ -713,10 +734,13 @@ router.post('/backfill-correct-answers', authenticate, authorize('superadmin', '
       if (options.length < 2) { unsolvable++; continue; }
 
       try {
+        const diagram = readDiagramImage(question.media_url);
         const result = await solveObjectiveQuestion({
           question_text: question.question_text,
           options,
           subject: question.subject_name,
+          imageBase64: diagram?.imageBase64,
+          mediaType: diagram?.mediaType,
         });
 
         const letterIndex = result?.correct_answer_letter
