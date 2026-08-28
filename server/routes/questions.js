@@ -5,7 +5,7 @@ const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 const { getDB } = require('../models/db');
 const { authenticate, optionalAuthenticate, authorize } = require('../middleware/auth');
-const { generateQuestionsWithAI, extractQuestionsFromImage, explainAnswer, parseGeminiError, EXPLANATION_BLOCKED_MARKER, solveObjectiveQuestion } = require('../ai/questionGenerator');
+const { generateQuestionsWithAI, extractQuestionsFromImage, explainAnswer, parseGeminiError, EXPLANATION_BLOCKED_MARKER } = require('../ai/questionGenerator');
 const { cleanMathNotation, cleanQuestionFields } = require('../utils/mathNotation');
 const { FREE_QUESTION_LIMIT, hasActivePaidPlan, getRemainingQuota, consumeQuota } = require('../services/freeTrial');
 const AdmZip = require('adm-zip');
@@ -22,32 +22,19 @@ const router = express.Router();
 // client's ExplanationBox) both treat it as "already has a real explanation"
 // and never call the AI at all. Detect that specific shape and treat it as
 // equivalent to missing, so these questions get a real explanation generated
-// instead of being silently skipped forever. Shared with routes/importBatches.js
-// via utils/answerQuality.js.
-const { isBareAnswerLetter, hasRealOptionContent } = require('../utils/answerQuality');
-const { solveAndSaveMissingAnswer } = require('../services/answerSolver');
-
-// correct_answers is meant to be stored as a JSON-encoded array â '["A"]' or
-// '["45.5"]' â but not every import path over this app's history guaranteed
-// that; some questions have it as a bare, unquoted value instead, stored
-// directly as e.g. A or 45.5 with no JSON encoding at all. A plain
-// `JSON.parse(raw)` throws on that (it isn't valid JSON), and a naive
-// try/catch that falls back to [] on failure silently treats a genuinely
-// recorded answer as if none exists â exactly the bug behind
-// generate-explanation returning 400 "no recorded correct answer" for
-// questions that the app can otherwise correctly mark right/wrong (which
-// evidently reads this same column through a more forgiving path elsewhere).
-// Falling back to the raw string itself, not [], is the fix: it preserves a
-// genuinely-recorded bare answer instead of discarding it.
-function parseAnswerList(raw) {
-  if (Array.isArray(raw)) return raw;
-  if (!raw) return [];
-  try {
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [String(parsed)];
-  } catch {
-    return [String(raw).trim()].filter(Boolean);
-  }
+// instead of being silently skipped forever.
+function isBareAnswerLetter(text) {
+  if (!text) return true;
+  let t = text.trim();
+  if (!t) return true;
+  // Strip common prefixes so "Option A", "Answer: A", "The answer is A" all
+  // reduce to just "A" before the final bare-letter check — a plain regex
+  // without this step either misses those phrasings or false-positives on
+  // genuine explanations that happen to start with the word "Answer".
+  t = t.replace(/^(the\s+)?(correct\s+)?answer\s*(is|:)?\s*/i, '');
+  t = t.replace(/^option\s*/i, '');
+  t = t.trim();
+  return /^\(?[A-Ea-e]\)?\.?$/.test(t);
 }
 
 // ── Image upload (question diagrams/graphs) ──
@@ -478,7 +465,7 @@ router.post('/:id/generate-explanation', optionalAuthenticate, async (req, res) 
   try {
     const db = getDB();
     const [rows] = await db.execute(
-      `SELECT q.id, q.question_text, q.question_type, q.options, q.correct_answers, q.explanation, q.media_url, s.name AS subject_name
+      `SELECT q.id, q.question_text, q.question_type, q.options, q.correct_answers, q.explanation, s.name AS subject_name
        FROM questions q LEFT JOIN subjects s ON q.subject_id = s.id
        WHERE q.id = ?`,
       [req.params.id]
@@ -492,50 +479,16 @@ router.post('/:id/generate-explanation', optionalAuthenticate, async (req, res) 
 
     const options = Array.isArray(question.options) ? question.options
       : (() => { try { return JSON.parse(question.options || '[]'); } catch { return []; } })();
-    let correct_answers = Array.isArray(question.correct_answers) ? question.correct_answers
-      : parseAnswerList(question.correct_answers);
-
-    // Same idea, different shape of bad data: a question whose options are
-    // all just bare letters ("A"/"B"/"C"/"D") never had real answer choices
-    // recorded — usually a diagram-based option the import pipeline
-    // couldn't transcribe. There's no real content here for the AI to write
-    // an explanation about, and nothing to auto-solve either — the options
-    // themselves are the missing piece, not just the answer.
-    if (question.question_type !== 'essay' && !hasRealOptionContent(options)) {
-      return res.status(400).json({ error: 'This question\'s answer options were not properly extracted — it needs to be fixed or removed from the question bank before it can have an explanation' });
-    }
+    const correct_answers = Array.isArray(question.correct_answers) ? question.correct_answers
+      : (() => { try { return JSON.parse(question.correct_answers || '[]'); } catch { return []; } })();
 
     // Essay/theory questions have no single correct_answers value by design
     // (there's nothing to "match" against) — explainAnswer handles that case
-    // with a model-answer-style explanation instead. An objective question
-    // missing its recorded answer used to just 400 here, pushing a manual
-    // "Fix Missing Correct Answers" admin click as the only way out — now
-    // it's solved automatically, on the spot, the moment anyone actually
-    // hits the gap, using the same AI solve used by that admin tool and the
-    // background auto-solver (see services/answerSolver.js). Only a
-    // genuinely unsolvable question (ambiguous, unreadable diagram, none of
-    // the options match the model's own working) still comes back as an
-    // error — there's truly nothing to explain in that case.
-    let autoSolved = false;
+    // with a model-answer-style explanation instead. Only genuinely block
+    // objective-type questions that are missing a recorded answer, since
+    // there's nothing true to explain from there.
     if (!correct_answers.length && question.question_type !== 'essay') {
-      const solve = await solveAndSaveMissingAnswer(db, { ...question, options });
-      if (solve.status === 'fixed') {
-        correct_answers = solve.correct_answers;
-        autoSolved = true;
-        if (solve.explanation) {
-          // The solve call's own worked steps already ARE a real
-          // explanation — no need to call explainAnswer a second time.
-          return res.json({ explanation: solve.explanation, cached: false, auto_solved: true });
-        }
-      } else if (solve.status === 'quota_exceeded') {
-        return res.status(429).json({
-          error: 'AI is temporarily unavailable to solve this question — daily quota reached. Try again shortly.',
-          code: 'AI_QUOTA_EXCEEDED',
-          retry_delay_seconds: solve.retryDelaySeconds,
-        });
-      } else {
-        return res.status(400).json({ error: 'This question has no recorded correct answer, and it could not be solved automatically — it needs a human to check it' });
-      }
+      return res.status(400).json({ error: 'This question has no recorded correct answer to explain from' });
     }
 
     const explanation = await explainAnswer({
@@ -596,15 +549,7 @@ router.post('/backfill-explanations', authenticate, async (req, res) => {
     const limit = Math.max(1, Math.min(50, Number(req.body?.limit) || 15));
     const { subject_id, exam_type, ids } = req.body || {};
 
-    // Broaden the SQL fetch beyond a strict empty check to also catch the
-    // isBareAnswerLetter placeholder pattern ("A", "Option A", "The answer is
-    // A" — see that function's comment above) — SQL can't run that exact JS
-    // check, so pull in anything short enough to PLAUSIBLY be one of those
-    // (a real explanation is essentially never this short) and filter
-    // precisely in JS below. This keeps the two "does this need a real
-    // explanation" checks in this file — this one and the single-question
-    // route above — actually consistent with each other.
-    let where = "q.is_active = TRUE AND (q.explanation IS NULL OR CHAR_LENGTH(TRIM(q.explanation)) <= 20)";
+    let where = "q.is_active = TRUE AND (q.explanation IS NULL OR q.explanation = '')";
     const params = [];
     if (subject_id) { where += ' AND q.subject_id = ?'; params.push(subject_id); }
     if (exam_type)  { where += ' AND JSON_CONTAINS(q.exam_types, ?)'; params.push(JSON.stringify(exam_type)); }
@@ -613,40 +558,18 @@ router.post('/backfill-explanations', authenticate, async (req, res) => {
       params.push(...ids);
     }
 
-    // Overfetch a little beyond `limit` before the precise JS filter below,
-    // since the broadened SQL condition above can match some short-but-real
-    // explanations that isBareAnswerLetter will correctly rule back out —
-    // without this, a batch could come back smaller than `limit` even though
-    // plenty of genuinely-missing questions remain.
-    const [candidateRows] = await db.execute(
-      `SELECT q.id, q.question_text, q.question_type, q.options, q.correct_answers, q.explanation, s.name AS subject_name
+    const [rows] = await db.execute(
+      `SELECT q.id, q.question_text, q.question_type, q.options, q.correct_answers, s.name AS subject_name
        FROM questions q LEFT JOIN subjects s ON q.subject_id = s.id
-       WHERE ${where} LIMIT ${limit * 4}`,
+       WHERE ${where} LIMIT ${limit}`,
       params
     );
-    const rows = candidateRows
-      .filter(q => !q.explanation || isBareAnswerLetter(q.explanation))
-      .slice(0, limit);
-
-    // Precise count of what's actually left, using the same JS filter as the
-    // batch fetch above rather than the broader SQL condition alone (which
-    // over-counts — it also matches short-but-genuine explanations that
-    // isBareAnswerLetter correctly rules back out). Capped at 2000 candidates
-    // — this only needs to be "accurate enough for a progress indicator", not
-    // exact against an unbounded table, and the loop terminates correctly
-    // either way via the generated===0 stop condition below.
-    const countRemaining = async () => {
-      const [candidates] = await db.execute(
-        `SELECT q.explanation FROM questions q WHERE ${where} LIMIT 2000`, params
-      );
-      return candidates.filter(q => !q.explanation || isBareAnswerLetter(q.explanation)).length;
-    };
 
     let generated = 0, failed = 0;
     for (const question of rows) {
       let options, correct_answers;
       try { options = Array.isArray(question.options) ? question.options : JSON.parse(question.options || '[]'); } catch { options = []; }
-      correct_answers = parseAnswerList(question.correct_answers);
+      try { correct_answers = Array.isArray(question.correct_answers) ? question.correct_answers : JSON.parse(question.correct_answers || '[]'); } catch { correct_answers = []; }
 
       if (!correct_answers.length && question.question_type !== 'essay') { failed++; continue; }
 
@@ -665,7 +588,7 @@ router.post('/backfill-explanations', authenticate, async (req, res) => {
           // Stop the whole batch here — every remaining question in it (and
           // any future call today) will fail the same way. Report what's
           // left so the caller knows to stop looping and try again later.
-          const remaining = await countRemaining();
+          const [[{ remaining }]] = await db.execute(`SELECT COUNT(*) as remaining FROM questions q WHERE ${where}`, params);
           return res.json({ generated, failed, remaining, quota_exceeded: true, retry_delay_seconds: geminiErr.retryDelaySeconds || null });
         }
         console.error(`backfill-explanations: failed on question ${question.id}:`, err.message);
@@ -673,167 +596,10 @@ router.post('/backfill-explanations', authenticate, async (req, res) => {
       }
     }
 
-    const remaining = await countRemaining();
+    const [[{ remaining }]] = await db.execute(`SELECT COUNT(*) as remaining FROM questions q WHERE ${where}`, params);
     res.json({ generated, failed, remaining, quota_exceeded: false });
   } catch (err) {
     console.error('POST /questions/backfill-explanations error:', err.message);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// GET /api/questions/flagged/bad-options — finds already-published live
-// questions whose answer options are all bare-letter placeholders (see
-// hasRealOptionContent in utils/answerQuality.js). The publish-time guard in
-// routes/importBatches.js stops NEW ones from reaching the live table, but
-// doesn't touch anything published before that guard existed — this is how
-// an admin finds and fixes/deactivates the existing backlog from the
-// Question Bank UI, rather than stumbling onto them one at a time the way a
-// student would.
-router.get('/flagged/bad-options', authenticate, authorize('superadmin', 'admin'), async (req, res) => {
-  try {
-    const db = getDB();
-    const [rows] = await db.execute(
-      `SELECT q.id, q.question_text, q.question_type, q.options, q.exam_body, q.tags, s.name AS subject_name
-       FROM questions q LEFT JOIN subjects s ON q.subject_id = s.id
-       WHERE q.is_active = TRUE AND q.question_type != 'essay'
-       LIMIT 5000`
-    );
-    const flagged = rows.filter(q => !hasRealOptionContent(q.options));
-    res.json({ count: flagged.length, questions: flagged });
-  } catch (err) {
-    console.error('GET /questions/flagged/bad-options error:', err.message);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// POST /api/questions/backfill-correct-answers â the "AI-Solve Missing
-// Answers" tool on the import-review screen only ever touches staged_questions,
-// BEFORE publish. There was never an equivalent for questions that made it all
-// the way to the live, published questions table with an empty
-// correct_answers â which is exactly what makes a question show every
-// option as "wrong" no matter which one a student picks (nothing can ever
-// match an empty answer list), AND makes generate-explanation correctly
-// refuse with 400 (there's genuinely nothing recorded to explain the route
-// to). Same loop-until-done design as backfill-explanations above: bounded
-// batches, quota-aware, paced, resumable.
-//
-// solveObjectiveQuestion already produces full worked steps alongside the
-// answer it picks â reused directly as the explanation in the same call,
-// rather than solving the answer here and then asking explainAnswer to
-// explain it separately in a second AI call right after.
-router.post('/backfill-correct-answers', authenticate, authorize('superadmin', 'admin'), async (req, res) => {
-  try {
-    const db = getDB();
-    const { subject_id, exam_type, limit: rawLimit, ids } = req.body || {};
-    const limit = Math.min(Math.max(parseInt(rawLimit, 10) || 15, 1), 50);
-
-    // Broaden the SQL fetch beyond "correct_answers IS NULL" to also catch a
-    // JSON column holding an empty array ('[]') or empty string â both are
-    // "nothing recorded" in effect, but neither IS NULL. Only ever considers
-    // mcq-type questions with at least 2 options: essay questions have no
-    // single correct answer to solve for (see the essay-vs-mcq handling in
-    // explainAnswer/backfill-explanations above), and a question with fewer
-    // than 2 options genuinely can't be multiple-choice-solved.
-    let where = "q.is_active = TRUE AND q.question_type != 'essay' AND JSON_LENGTH(q.options) >= 2 AND (q.correct_answers IS NULL OR JSON_LENGTH(q.correct_answers) = 0)";
-    const params = [];
-    if (subject_id) { where += ' AND q.subject_id = ?'; params.push(subject_id); }
-    if (exam_type)  { where += ' AND JSON_CONTAINS(q.exam_types, ?)'; params.push(JSON.stringify(exam_type)); }
-    if (Array.isArray(ids) && ids.length) {
-      where += ` AND q.id IN (${ids.map(() => '?').join(',')})`;
-      params.push(...ids);
-    }
-
-    const [rows] = await db.execute(
-      `SELECT q.id, q.question_text, q.question_type, q.options, q.media_url, s.name AS subject_name
-       FROM questions q LEFT JOIN subjects s ON q.subject_id = s.id
-       WHERE ${where} LIMIT ${limit}`,
-      params
-    );
-
-    // media_url is a public path like /uploads/diagrams/xxx.jpg, served
-    // directly by express.static(uploads) in index.js â that maps 1:1 onto
-    // this same server's uploads/ directory on disk, so the file for a given
-    // question's diagram is always right here, no separate storage lookup
-    // needed. Missing/unreadable files fail soft (undefined) rather than
-    // throwing â a broken diagram link shouldn't block a question that's
-    // otherwise solvable from its text alone.
-    const readDiagramImage = (mediaUrl) => {
-      if (!mediaUrl || !mediaUrl.startsWith('/uploads/')) return undefined;
-      try {
-        const filePath = path.join(__dirname, '..', mediaUrl);
-        const buffer = fs.readFileSync(filePath);
-        const ext = path.extname(filePath).toLowerCase();
-        const mediaType = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
-        return { imageBase64: buffer.toString('base64'), mediaType };
-      } catch (err) {
-        console.error(`backfill-correct-answers: couldn't read diagram at ${mediaUrl}:`, err.message);
-        return undefined;
-      }
-    };
-
-    const countRemaining = async () => {
-      const [[{ cnt }]] = await db.execute(`SELECT COUNT(*) as cnt FROM questions q WHERE ${where}`, params);
-      return cnt;
-    };
-
-    let fixed = 0, unsolvable = 0;
-    for (const question of rows) {
-      let options;
-      try { options = Array.isArray(question.options) ? question.options : JSON.parse(question.options || '[]'); } catch { options = []; }
-      if (options.length < 2) { unsolvable++; continue; }
-
-      try {
-        const diagram = readDiagramImage(question.media_url);
-        const result = await solveObjectiveQuestion({
-          question_text: question.question_text,
-          options,
-          subject: question.subject_name,
-          imageBase64: diagram?.imageBase64,
-          mediaType: diagram?.mediaType,
-        });
-
-        const letterIndex = result?.correct_answer_letter
-          ? result.correct_answer_letter.toUpperCase().charCodeAt(0) - 65
-          : -1;
-
-        if (result?.solvable && letterIndex >= 0 && letterIndex < options.length) {
-          const correctAnswerText = options[letterIndex];
-          // solution_steps IS a real explanation, not just working notes â
-          // save it as one too so this doesn't leave the question needing a
-          // second, separate AI call from backfill-explanations right after.
-          if (result.solution_steps) {
-            await db.execute(
-              'UPDATE questions SET correct_answers=?, explanation=? WHERE id=?',
-              [JSON.stringify([correctAnswerText]), result.solution_steps, question.id]
-            );
-          } else {
-            await db.execute(
-              'UPDATE questions SET correct_answers=? WHERE id=?',
-              [JSON.stringify([correctAnswerText]), question.id]
-            );
-          }
-          fixed++;
-        } else {
-          // Genuinely unsolvable (ambiguous, needs a diagram not in the text,
-          // none of the options matched the model's own working) â leave it
-          // for a human to fix manually rather than guessing.
-          unsolvable++;
-        }
-      } catch (err) {
-        const geminiErr = parseGeminiError(err);
-        if (geminiErr.isQuotaExceeded) {
-          const remaining = await countRemaining();
-          return res.json({ fixed, unsolvable, remaining, quota_exceeded: true, retry_delay_seconds: geminiErr.retryDelaySeconds || null });
-        }
-        console.error(`backfill-correct-answers: failed on question ${question.id}:`, err.message);
-        unsolvable++;
-      }
-    }
-
-    const remaining = await countRemaining();
-    res.json({ fixed, unsolvable, remaining, quota_exceeded: false });
-  } catch (err) {
-    console.error('POST /questions/backfill-correct-answers error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
@@ -996,6 +762,67 @@ async function cropDiagram(buffer, box) {
     return null;
   }
 }
+
+// POST /api/questions/:id/manual-crop
+// For the stubborn single case: the AI's box estimate was wrong or it fell
+// back to the whole page, and simply re-running extraction on the same photo
+// would likely produce the same result. Lets an admin draw the correct box
+// by hand against the question's *current* image (which for a fallback case
+// IS the full source page already on disk) and re-crops from that exact
+// selection — no re-upload, no AI call, immediate and deterministic.
+router.post('/:id/manual-crop', authenticate, authorize('superadmin', 'admin', 'examiner'), async (req, res) => {
+  try {
+    const { box } = req.body;
+    if (!box || [box.x_min, box.y_min, box.x_max, box.y_max].some(v => typeof v !== 'number')) {
+      return res.status(400).json({ error: 'A valid box {x_min,y_min,x_max,y_max} (0-100) is required' });
+    }
+
+    const db = getDB();
+    const [rows] = await db.execute('SELECT media_url FROM questions WHERE id=?', [req.params.id]);
+    if (!rows[0]) return res.status(404).json({ error: 'Question not found' });
+    if (!rows[0].media_url) return res.status(400).json({ error: 'This question has no image to crop from' });
+
+    // media_url is a public path like /uploads/diagrams/x.jpg or
+    // /uploads/source-papers/WAEC/2024/y.jpg — map back to the real file.
+    const relative = rows[0].media_url.replace(/^\/uploads\//, '');
+    const sourcePath = path.join(__dirname, '..', 'uploads', relative);
+    if (!fs.existsSync(sourcePath)) {
+      return res.status(404).json({ error: 'The current image file is missing on disk — use Repair Diagrams to re-upload the source photo first' });
+    }
+
+    const buffer = fs.readFileSync(sourcePath);
+    // Manual selections get a small margin only (2pt, not the AI's 8pt) —
+    // the admin is drawing this precisely against what they can see, not
+    // guessing from a model's rough estimate.
+    const img = sharp(buffer);
+    const meta = await img.metadata();
+    if (!meta.width || !meta.height) return res.status(500).json({ error: 'Could not read image dimensions' });
+
+    const pad = 2;
+    const xMin = Math.max(0, box.x_min - pad);
+    const yMin = Math.max(0, box.y_min - pad);
+    const xMax = Math.min(100, box.x_max + pad);
+    const yMax = Math.min(100, box.y_max + pad);
+    if (xMax <= xMin || yMax <= yMin) return res.status(400).json({ error: 'Invalid crop box' });
+
+    const left = Math.round((xMin / 100) * meta.width);
+    const top = Math.round((yMin / 100) * meta.height);
+    const width = Math.min(Math.round(((xMax - xMin) / 100) * meta.width), meta.width - left);
+    const height = Math.min(Math.round(((yMax - yMin) / 100) * meta.height), meta.height - top);
+    if (width < 10 || height < 10) return res.status(400).json({ error: 'Selection is too small' });
+
+    fs.mkdirSync(DIAGRAMS_DIR, { recursive: true });
+    const filename = `${uuidv4()}.jpg`;
+    await sharp(buffer).extract({ left, top, width, height }).jpeg({ quality: 90 }).toFile(path.join(DIAGRAMS_DIR, filename));
+    const newUrl = `/uploads/diagrams/${filename}`;
+
+    await db.execute('UPDATE questions SET media_url=? WHERE id=?', [newUrl, req.params.id]);
+    res.json({ media_url: newUrl });
+  } catch (err) {
+    console.error('manual-crop error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
 
 const zipUpload = multer({
   storage: multer.memoryStorage(),
