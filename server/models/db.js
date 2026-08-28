@@ -732,6 +732,32 @@ async function createSchema() {
   } catch (e) { /* already exists */ }
 
   console.log('✅ Quality checklist schema ready');
+
+  // One-time cleanup, safe to run on every boot (idempotent — does nothing
+  // once there's nothing left to fix): questions published before the fix
+  // to routes/importBatches.js had their media_url fall back to the ENTIRE
+  // raw scanned source page whenever the diagram crop failed at import
+  // time — so a student would see the whole exam page (unrelated
+  // questions, handwriting, everything) instead of a proper cropped
+  // diagram. That fix only stops it from happening to NEW imports; it
+  // can't retroactively fix rows that already have the bad URL saved. This
+  // finds any question whose media_url points into source-papers/ (whole
+  // pages) rather than diagrams/ (actual crops) and clears it, which:
+  //   - immediately stops showing the wrong full-page image to students
+  //   - flips it back into the same state a freshly-failed crop would be
+  //     in, so it shows up correctly in "Fix / Re-crop Diagrams" for an
+  //     admin to give it a real crop
+  try {
+    const [result] = await db.execute(
+      `UPDATE questions SET media_url = NULL
+       WHERE media_url LIKE '/uploads/source-papers/%'`
+    );
+    if (result.affectedRows > 0) {
+      console.log(`✅ Cleared ${result.affectedRows} question(s) that were showing a full scanned page instead of a cropped diagram`);
+    }
+  } catch (e) {
+    console.error('media_url cleanup failed (non-fatal):', e.message);
+  }
 }
 
 module.exports = { initDB, getDB };
