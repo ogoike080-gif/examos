@@ -27,6 +27,7 @@ const resultsRoutes   = require('./routes/results');
 const aiRoutes        = require('./routes/ai');
 const parentRoutes    = require('./routes/parent');
 const { initSocket } = require('./socket/socketManager');
+const { startAutoAnswerSolver } = require('./services/autoAnswerSolver');
 
 const app = express();
 const server = http.createServer(app);
@@ -246,6 +247,14 @@ async function start() {
       }
       console.log('');
     });
+
+    // Fully automatic — no admin action needed. Continuously works through
+    // any live question missing a recorded correct answer in the
+    // background (see services/autoAnswerSolver.js). The manual "Fix
+    // Missing Correct Answers" button in Question Bank still exists for an
+    // admin who wants a specific batch done right now, but this covers the
+    // rest of the bank on its own over time.
+    startAutoAnswerSolver();
   } catch (err) {
     console.error('❌ Failed to start server:', err);
     process.exit(1);

@@ -25,6 +25,7 @@ const router = express.Router();
 // instead of being silently skipped forever. Shared with routes/importBatches.js
 // via utils/answerQuality.js.
 const { isBareAnswerLetter, hasRealOptionContent } = require('../utils/answerQuality');
+const { solveAndSaveMissingAnswer } = require('../services/answerSolver');
 
 // correct_answers is meant to be stored as a JSON-encoded array â '["A"]' or
 // '["45.5"]' â but not every import path over this app's history guaranteed
@@ -477,7 +478,7 @@ router.post('/:id/generate-explanation', optionalAuthenticate, async (req, res) 
   try {
     const db = getDB();
     const [rows] = await db.execute(
-      `SELECT q.id, q.question_text, q.question_type, q.options, q.correct_answers, q.explanation, s.name AS subject_name
+      `SELECT q.id, q.question_text, q.question_type, q.options, q.correct_answers, q.explanation, q.media_url, s.name AS subject_name
        FROM questions q LEFT JOIN subjects s ON q.subject_id = s.id
        WHERE q.id = ?`,
       [req.params.id]
@@ -491,25 +492,50 @@ router.post('/:id/generate-explanation', optionalAuthenticate, async (req, res) 
 
     const options = Array.isArray(question.options) ? question.options
       : (() => { try { return JSON.parse(question.options || '[]'); } catch { return []; } })();
-    const correct_answers = Array.isArray(question.correct_answers) ? question.correct_answers
+    let correct_answers = Array.isArray(question.correct_answers) ? question.correct_answers
       : parseAnswerList(question.correct_answers);
-
-    // Essay/theory questions have no single correct_answers value by design
-    // (there's nothing to "match" against) — explainAnswer handles that case
-    // with a model-answer-style explanation instead. Only genuinely block
-    // objective-type questions that are missing a recorded answer, since
-    // there's nothing true to explain from there.
-    if (!correct_answers.length && question.question_type !== 'essay') {
-      return res.status(400).json({ error: 'This question has no recorded correct answer to explain from' });
-    }
 
     // Same idea, different shape of bad data: a question whose options are
     // all just bare letters ("A"/"B"/"C"/"D") never had real answer choices
     // recorded — usually a diagram-based option the import pipeline
     // couldn't transcribe. There's no real content here for the AI to write
-    // an explanation about either.
+    // an explanation about, and nothing to auto-solve either — the options
+    // themselves are the missing piece, not just the answer.
     if (question.question_type !== 'essay' && !hasRealOptionContent(options)) {
       return res.status(400).json({ error: 'This question\'s answer options were not properly extracted — it needs to be fixed or removed from the question bank before it can have an explanation' });
+    }
+
+    // Essay/theory questions have no single correct_answers value by design
+    // (there's nothing to "match" against) — explainAnswer handles that case
+    // with a model-answer-style explanation instead. An objective question
+    // missing its recorded answer used to just 400 here, pushing a manual
+    // "Fix Missing Correct Answers" admin click as the only way out — now
+    // it's solved automatically, on the spot, the moment anyone actually
+    // hits the gap, using the same AI solve used by that admin tool and the
+    // background auto-solver (see services/answerSolver.js). Only a
+    // genuinely unsolvable question (ambiguous, unreadable diagram, none of
+    // the options match the model's own working) still comes back as an
+    // error — there's truly nothing to explain in that case.
+    let autoSolved = false;
+    if (!correct_answers.length && question.question_type !== 'essay') {
+      const solve = await solveAndSaveMissingAnswer(db, { ...question, options });
+      if (solve.status === 'fixed') {
+        correct_answers = solve.correct_answers;
+        autoSolved = true;
+        if (solve.explanation) {
+          // The solve call's own worked steps already ARE a real
+          // explanation — no need to call explainAnswer a second time.
+          return res.json({ explanation: solve.explanation, cached: false, auto_solved: true });
+        }
+      } else if (solve.status === 'quota_exceeded') {
+        return res.status(429).json({
+          error: 'AI is temporarily unavailable to solve this question — daily quota reached. Try again shortly.',
+          code: 'AI_QUOTA_EXCEEDED',
+          retry_delay_seconds: solve.retryDelaySeconds,
+        });
+      } else {
+        return res.status(400).json({ error: 'This question has no recorded correct answer, and it could not be solved automatically — it needs a human to check it' });
+      }
     }
 
     const explanation = await explainAnswer({
