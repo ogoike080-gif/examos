@@ -93,6 +93,94 @@ function RepairDiagramsModal({ subjects, onClose, onDone }) {
   );
 }
 
+// Lists live, published questions whose options are all bare-letter
+// placeholders ("A"/"B"/"C"/"D" — see hasRealOptionContent in
+// utils/answerQuality.js). These are questions that made it into the live
+// bank before the publish-time guard existed (or from any other path), and
+// are otherwise invisible to admins until a student happens to hit one.
+// Deactivating here uses the same is_active flag as the row's own Delete
+// action elsewhere in this page, so it's reversible from the Question
+// Builder if a question turns out to be fixable rather than junk.
+function FlaggedOptionsModal({ onClose, onDone, navigate }) {
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [items, setItems] = useState([]);
+  const [working, setWorking] = useState(null); // id currently being deactivated
+
+  const load = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await questionAPI.flaggedBadOptions();
+      setItems(res.data.questions || []);
+    } catch (err) {
+      setError(err.response?.data?.error || "Couldn't load flagged questions");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { load(); }, []);
+
+  const deactivate = async (q) => {
+    setWorking(q.id);
+    try {
+      await questionAPI.delete(q.id); // soft delete (is_active=FALSE) — see routes/questions.js DELETE /:id
+      toast.success('Deactivated — no longer shown to students');
+      setItems(list => list.filter(x => x.id !== q.id));
+      onDone();
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to deactivate');
+    } finally {
+      setWorking(null);
+    }
+  };
+
+  return (
+    <div className="modal-backdrop" onClick={e => e.target === e.currentTarget && onClose()}>
+      <div className="modal" style={{ maxWidth: 620, maxHeight:'80vh', display:'flex', flexDirection:'column' }}>
+        <div className="modal-header">
+          <h3>🚩 Flagged: Placeholder Options{!loading && !error ? ` (${items.length})` : ''}</h3>
+          <button onClick={onClose} style={{ background:'var(--bg-raised)', border:'1px solid var(--border)', borderRadius:'var(--r)', width:30, height:30, cursor:'pointer' }}>✕</button>
+        </div>
+        <div className="modal-body" style={{ overflowY:'auto' }}>
+          <p style={{ fontSize:13, color:'var(--text-secondary)', marginBottom:14, lineHeight:1.5 }}>
+            These live questions have answer options that are just the bare letters "A"/"B"/"C"/"D" — never real content, usually a diagram-based option the import pipeline couldn't transcribe. Fix them in the Question Builder, or deactivate them so students stop seeing them.
+          </p>
+          {loading && <div style={{ fontSize:13, color:'var(--text-secondary)', padding:'16px 0' }}>Loading…</div>}
+          {error && <div style={{ fontSize:13, color:'var(--danger, #DC2626)', padding:'16px 0' }}>{error}</div>}
+          {!loading && !error && items.length === 0 && (
+            <div style={{ fontSize:13, color:'var(--text-secondary)', padding:'16px 0' }}>None found — the live question bank is clean.</div>
+          )}
+          {!loading && !error && items.length > 0 && (
+            <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
+              {items.map(q => (
+                <div key={q.id} style={{ border:'1px solid var(--border)', borderRadius:10, padding:'10px 12px' }}>
+                  <div style={{ fontSize:12, color:'var(--text-secondary)', marginBottom:4 }}>
+                    {q.subject_name || 'Unknown subject'} · {q.exam_body || '—'} {(() => { try { const tags = Array.isArray(q.tags)?q.tags:JSON.parse(q.tags||'[]'); const y = tags.find(t=>/^(19|20)\d{2}$/.test(String(t))); return y ? `· ${y}` : ''; } catch { return ''; } })()}
+                  </div>
+                  <div style={{ fontSize:13.5, color:'var(--text-primary)', marginBottom:8, lineHeight:1.5 }}>
+                    <MathText text={q.question_text} inline />
+                  </div>
+                  <div style={{ display:'flex', gap:8 }}>
+                    <button className="btn btn-secondary" style={{ fontSize:12, padding:'5px 10px' }} onClick={() => { onClose(); navigate(`/admin/questions/${q.id}/edit`); }}>Edit</button>
+                    <button className="btn btn-danger" style={{ fontSize:12, padding:'5px 10px' }} disabled={working===q.id} onClick={() => deactivate(q)}>
+                      {working===q.id ? 'Deactivating…' : 'Deactivate'}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+        <div className="modal-footer">
+          <button className="btn btn-secondary" onClick={onClose}>Close</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function QuestionBankPage() {
   const navigate = useNavigate();
   const [questions, setQuestions] = useState([]);
@@ -217,6 +305,7 @@ export default function QuestionBankPage() {
   };
 
   const [showRepair, setShowRepair] = useState(false);
+  const [showFlagged, setShowFlagged] = useState(false);
 
   return (
     <div className={styles.page}>
@@ -244,6 +333,9 @@ export default function QuestionBankPage() {
           <Button variant="ghost" onClick={() => setShowRepair(true)}>
             🖼️ Fix / Re-crop Diagrams
           </Button>
+          <Button variant="ghost" onClick={() => setShowFlagged(true)}>
+            🚩 Flagged Options
+          </Button>
           <Button variant="ghost" onClick={() => navigate('/admin/questions/new')}>
             ✦ AI Generate
           </Button>
@@ -253,6 +345,9 @@ export default function QuestionBankPage() {
 
       {showRepair && (
         <RepairDiagramsModal subjects={subjects} onClose={() => setShowRepair(false)} onDone={load} />
+      )}
+      {showFlagged && (
+        <FlaggedOptionsModal onClose={() => setShowFlagged(false)} onDone={load} navigate={navigate} />
       )}
 
       {/* Filters */}

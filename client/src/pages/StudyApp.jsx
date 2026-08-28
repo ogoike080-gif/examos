@@ -23,8 +23,21 @@ function safeParseArray(v) {
 // questions are excluded from these sessions entirely; they get their own
 // year-grouped read-through list on the setup screen instead (see
 // TheoryQuestionsBrowser below).
+//
+// Separately: some imported questions have options that are themselves
+// diagrams/graphs the extraction pipeline couldn't transcribe (e.g. "which
+// number line shows..."), and it fell back to writing the bare letter itself
+// ("A", "B", "C", "D") as the option text instead of real content. That's
+// not a real answer choice — it's indistinguishable from a blank — so a
+// question where EVERY option is just a bare letter is just as unanswerable
+// as one with zero options, and gets excluded the same way. (This mirrors
+// isBareAnswerLetter in routes/questions.js, which the server uses for the
+// same shape of bad data in the explanation field.)
+const BARE_LETTER_OPTION = /^\(?[A-Ea-e]\)?\.?$/;
 function isAnswerable(q) {
-  return safeParseArray(q.options).length > 0;
+  const opts = safeParseArray(q.options);
+  if (opts.length === 0) return false;
+  return opts.some(o => !BARE_LETTER_OPTION.test(String(o).trim()));
 }
 
 function formatTime(s) {

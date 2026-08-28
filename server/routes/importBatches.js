@@ -28,6 +28,7 @@ const { getDB } = require('../models/db');
 const { authenticate, authorize } = require('../middleware/auth');
 const { extractQuestionsFromImage, reverifyLowConfidenceQuestion, solveObjectiveQuestion, reconstructDiagramSVG, qualityCheckDiagram, parseGeminiError } = require('../ai/questionGenerator');
 const { computeConfidence } = require('../services/confidenceScoring');
+const { hasRealOptionContent } = require('../utils/answerQuality');
 
 const router = express.Router();
 
@@ -958,7 +959,23 @@ router.post('/:id/publish', authenticate, authorize('superadmin', 'admin'), asyn
     }
 
     let published = 0;
+    let heldForReview = 0;
     for (const s of staged) {
+      // Even a "verified" staged row can still have this specific shape of
+      // bad data slip through if a human reviewer eyeballed the question
+      // text/diagram and approved it without noticing the options were
+      // never real content ("A"/"B"/"C"/"D" placeholders — see
+      // utils/answerQuality.js). Catch it here, at the last point before it
+      // becomes visible to students, rather than relying on review alone.
+      if (s.question_type !== 'essay' && !hasRealOptionContent(s.options)) {
+        await db.execute(
+          `UPDATE staged_questions SET review_status='needs_review', review_notes=? WHERE id=?`,
+          ['Options were not properly extracted (placeholder letters only) — fix the option text before publishing', s.id]
+        );
+        heldForReview++;
+        continue;
+      }
+
       const questionId = uuidv4();
       const tags = [batch.exam_body, String(batch.year)].filter(Boolean);
       await db.execute(
@@ -987,7 +1004,12 @@ router.post('/:id/publish', authenticate, authorize('superadmin', 'admin'), asyn
       await db.execute(`UPDATE import_batches SET status='published' WHERE id=?`, [req.params.id]);
     }
 
-    res.json({ message: `Published ${published} question(s) to the live question bank`, published, remaining_in_review: remaining });
+    res.json({
+      message: heldForReview
+        ? `Published ${published} question(s) — ${heldForReview} sent back to review (options weren't properly extracted)`
+        : `Published ${published} question(s) to the live question bank`,
+      published, held_for_review: heldForReview, remaining_in_review: remaining,
+    });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

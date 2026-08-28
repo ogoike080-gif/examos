@@ -22,20 +22,9 @@ const router = express.Router();
 // client's ExplanationBox) both treat it as "already has a real explanation"
 // and never call the AI at all. Detect that specific shape and treat it as
 // equivalent to missing, so these questions get a real explanation generated
-// instead of being silently skipped forever.
-function isBareAnswerLetter(text) {
-  if (!text) return true;
-  let t = text.trim();
-  if (!t) return true;
-  // Strip common prefixes so "Option A", "Answer: A", "The answer is A" all
-  // reduce to just "A" before the final bare-letter check — a plain regex
-  // without this step either misses those phrasings or false-positives on
-  // genuine explanations that happen to start with the word "Answer".
-  t = t.replace(/^(the\s+)?(correct\s+)?answer\s*(is|:)?\s*/i, '');
-  t = t.replace(/^option\s*/i, '');
-  t = t.trim();
-  return /^\(?[A-Ea-e]\)?\.?$/.test(t);
-}
+// instead of being silently skipped forever. Shared with routes/importBatches.js
+// via utils/answerQuality.js.
+const { isBareAnswerLetter, hasRealOptionContent } = require('../utils/answerQuality');
 
 // correct_answers is meant to be stored as a JSON-encoded array â '["A"]' or
 // '["45.5"]' â but not every import path over this app's history guaranteed
@@ -514,6 +503,15 @@ router.post('/:id/generate-explanation', optionalAuthenticate, async (req, res) 
       return res.status(400).json({ error: 'This question has no recorded correct answer to explain from' });
     }
 
+    // Same idea, different shape of bad data: a question whose options are
+    // all just bare letters ("A"/"B"/"C"/"D") never had real answer choices
+    // recorded — usually a diagram-based option the import pipeline
+    // couldn't transcribe. There's no real content here for the AI to write
+    // an explanation about either.
+    if (question.question_type !== 'essay' && !hasRealOptionContent(options)) {
+      return res.status(400).json({ error: 'This question\'s answer options were not properly extracted — it needs to be fixed or removed from the question bank before it can have an explanation' });
+    }
+
     const explanation = await explainAnswer({
       question_text: question.question_text,
       options,
@@ -653,6 +651,31 @@ router.post('/backfill-explanations', authenticate, async (req, res) => {
     res.json({ generated, failed, remaining, quota_exceeded: false });
   } catch (err) {
     console.error('POST /questions/backfill-explanations error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/questions/flagged/bad-options — finds already-published live
+// questions whose answer options are all bare-letter placeholders (see
+// hasRealOptionContent in utils/answerQuality.js). The publish-time guard in
+// routes/importBatches.js stops NEW ones from reaching the live table, but
+// doesn't touch anything published before that guard existed — this is how
+// an admin finds and fixes/deactivates the existing backlog from the
+// Question Bank UI, rather than stumbling onto them one at a time the way a
+// student would.
+router.get('/flagged/bad-options', authenticate, authorize('superadmin', 'admin'), async (req, res) => {
+  try {
+    const db = getDB();
+    const [rows] = await db.execute(
+      `SELECT q.id, q.question_text, q.question_type, q.options, q.exam_body, q.tags, s.name AS subject_name
+       FROM questions q LEFT JOIN subjects s ON q.subject_id = s.id
+       WHERE q.is_active = TRUE AND q.question_type != 'essay'
+       LIMIT 5000`
+    );
+    const flagged = rows.filter(q => !hasRealOptionContent(q.options));
+    res.json({ count: flagged.length, questions: flagged });
+  } catch (err) {
+    console.error('GET /questions/flagged/bad-options error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });

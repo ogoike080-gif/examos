@@ -69,6 +69,11 @@ export const questionAPI = {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
   },
+  // Live, published questions whose answer options are all bare-letter
+  // placeholders ("A"/"B"/"C"/"D") — never real content, usually a
+  // diagram-based option the import pipeline couldn't transcribe. See
+  // hasRealOptionContent in utils/answerQuality.js.
+  flaggedBadOptions: () => axios.get(`${API}/questions/flagged/bad-options`),
 };
 
 // ── PROCTOR ───────────────────────────────────────────────────
