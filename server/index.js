@@ -1,4 +1,6 @@
-require('dotenv').config();
+if (process.env.NODE_ENV !== 'production') {
+  require('dotenv').config();
+}
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
@@ -17,21 +19,29 @@ const analyticsRoutes = require('./routes/analytics');
 const proctorRoutes  = require('./routes/proctor');
 const subjectRoutes  = require('./routes/subjects');
 const importRoutes   = require('./routes/import');
+const importBatchesRoutes = require('./routes/importBatches');
+const syllabusRoutes = require('./routes/syllabus');
+const textbooksRoutes = require('./routes/textbooks');
 const settingsRoutes = require('./routes/settings');
 const resultsRoutes   = require('./routes/results');
 const aiRoutes        = require('./routes/ai');
 const parentRoutes    = require('./routes/parent');
 const { initSocket } = require('./socket/socketManager');
+const { startAutoAnswerSolver } = require('./services/autoAnswerSolver');
 
 const app = express();
 const server = http.createServer(app);
 
+// Trust Railway's reverse proxy so req.ip and X-Forwarded-For are read
+// correctly. Without this, express-rate-limit v7 throws on every request
+// when it detects X-Forwarded-For but doesn't trust the proxy — which is
+// exactly what was causing the global 500s on both API routes and static
+// assets (CSS/JS returning JSON error bodies instead of file content).
+app.set('trust proxy', 1);
+
 const gamificationRoutes = require('./routes/gamification');
-app.use('/api/gamification', gamificationRoutes);
-
 const paymentsRoutes = require('./routes/payments');
-app.use('/api/payments', paymentsRoutes);
-
+const { paystackWebhookHandler } = paymentsRoutes;
 
 // ── CORS: allow localhost AND any 192.168.x.x / 10.x.x.x on port 3000 ──
 function isAllowedOrigin(origin) {
@@ -40,6 +50,12 @@ function isAllowedOrigin(origin) {
     'http://localhost:3000',
     'http://127.0.0.1:3000',
   ];
+  // Allow the deployed production domain itself (client is served from
+  // this same server, so its own JS module requests carry this Origin).
+  if (process.env.CLIENT_URL && origin === process.env.CLIENT_URL) return true;
+  // Also allow any *.up.railway.app domain as a safety net in case
+  // CLIENT_URL isn't set or Railway's assigned domain changes.
+  if (/^https:\/\/[a-z0-9-]+\.up\.railway\.app$/.test(origin)) return true;
   if (allowed.includes(origin)) return true;
   // Allow any LAN IP on port 3000
   if (/^http:\/\/192\.168\.\d+\.\d+:3000$/.test(origin)) return true;
@@ -80,9 +96,17 @@ app.use(
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
-        scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
-        styleSrc: ["'self'", "'unsafe-inline'"],
+        // js.paystack.co is required for the checkout widget itself
+        // (window.PaystackPop) — without it here, the script is silently
+        // blocked by the browser and "Processing..." spins forever with no
+        // visible error except in devtools. frameSrc is needed too since
+        // Paystack's checkout renders in an iframe, not just a script tag.
+        scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https://js.paystack.co"],
+        frameSrc: ["'self'", "https://js.paystack.co", "https://checkout.paystack.com"],
+        styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com", "https://paystack.com"],
+        fontSrc: ["'self'", "https://fonts.gstatic.com", "data:"],
         imgSrc: ["'self'", "data:", "blob:"],
+        mediaSrc: ["'self'", "data:", "blob:"],
         connectSrc: ["'self'", "ws:", "wss:", "http:", "https:"]
       }
     },
@@ -107,6 +131,16 @@ const authLimiter = rateLimit({
 });
 app.use('/api/auth/', authLimiter);
 
+// Paystack webhook — MUST be registered before express.json() below and
+// given the raw request body, not the parsed one. Signature verification
+// (see paystackWebhookHandler) is an HMAC over the exact raw bytes Paystack
+// sent; verifying against a re-serialized JSON object can silently mismatch
+// and either reject genuine webhooks or (worse) accept a forged one if the
+// check is loosened to compensate. This is also the *reliable* path for
+// activating a subscription — unlike the browser-only /verify call, this
+// fires even if the student closes the tab right after paying.
+app.post('/api/payments/webhook', express.raw({ type: 'application/json' }), paystackWebhookHandler);
+
 // Body parsing
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
@@ -124,10 +158,24 @@ app.use('/api/analytics',  analyticsRoutes);
 app.use('/api/proctor',    proctorRoutes);
 app.use('/api/subjects',   subjectRoutes);
 app.use('/api/import',     importRoutes);
+// New batch-based staging pipeline (Milestone 3) — mounted separately so the
+// existing zip-extract/image-extract routes above are completely untouched.
+app.use('/api/import/batches', importBatchesRoutes);
+// Exam Preparation Learning System — Exam Body Manager + topic content
+app.use('/api/syllabus', syllabusRoutes);
+app.use('/api/textbooks', textbooksRoutes);
 app.use('/api/settings',   settingsRoutes);
 app.use('/api/results',  resultsRoutes);
 app.use('/api/ai',       aiRoutes);
 app.use('/api/parent',   parentRoutes);
+// gamification + payments were previously mounted above, before helmet/cors/
+// rate-limiting/body-parsing had run — every POST to either (award XP,
+// initialize payment, verify payment) crashed with "Cannot destructure
+// property of req.body as it is undefined" before it ever reached its own
+// logic. Moved here, after express.json()/urlencoded(), where every other
+// POST route already correctly lives.
+app.use('/api/gamification', gamificationRoutes);
+app.use('/api/payments',   paymentsRoutes);
 
 // Health check — shows server IP so students know what to connect to
 app.get('/api/health', (req, res) => {
@@ -199,6 +247,14 @@ async function start() {
       }
       console.log('');
     });
+
+    // Fully automatic — no admin action needed. Continuously works through
+    // any live question missing a recorded correct answer in the
+    // background (see services/autoAnswerSolver.js). The manual "Fix
+    // Missing Correct Answers" button in Question Bank still exists for an
+    // admin who wants a specific batch done right now, but this covers the
+    // rest of the bank on its own over time.
+    startAutoAnswerSolver();
   } catch (err) {
     console.error('❌ Failed to start server:', err);
     process.exit(1);

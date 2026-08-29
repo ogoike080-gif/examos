@@ -63,7 +63,7 @@ export default function LandingPage() {
           <span style={{ fontSize:10, background:'var(--brand-dim)', color:'var(--brand-light)', padding:'2px 8px', borderRadius:'var(--r-full)', fontWeight:700, letterSpacing:'0.04em' }}>2.0</span>
         </div>
         <div style={{ display:'flex', alignItems:'center', gap:10 }}>
-          <button onClick={() => navigate('/practice')} className="btn btn-ghost btn-sm" style={{ fontSize:13 }}>Practice Free</button>
+          <button onClick={() => navigate('/study')} className="btn btn-ghost btn-sm" style={{ fontSize:13 }}>Practice Free</button>
           <ThemeToggle size="sm" />
           <button onClick={() => navigate('/login')} className="btn btn-primary btn-sm">Login</button>
         </div>
@@ -102,7 +102,7 @@ export default function LandingPage() {
           </p>
 
           <div style={{ display:'flex', gap:12, justifyContent:'center', flexWrap:'wrap', marginBottom:48 }}>
-            <button onClick={() => navigate('/practice')} className="btn btn-primary btn-xl" style={{ fontSize:16, gap:10 }}>
+            <button onClick={() => navigate('/study')} className="btn btn-primary btn-xl" style={{ fontSize:16, gap:10 }}>
               🎯 Start Practicing Free
             </button>
             <button onClick={() => navigate('/login')} className="btn btn-secondary btn-xl" style={{ fontSize:16 }}>
@@ -179,7 +179,7 @@ export default function LandingPage() {
             Join thousands of Nigerian students already using ExamOS to prepare smarter and score higher.
           </p>
           <div style={{ display:'flex', gap:12, justifyContent:'center', flexWrap:'wrap' }}>
-            <button onClick={() => navigate('/practice')} style={{ padding:'14px 32px', borderRadius:'var(--r-lg)', background:'#fff', color:'var(--brand-dark)', border:'none', fontWeight:800, fontSize:15, cursor:'pointer', fontFamily:'var(--font-body)', transition:'all 0.15s' }}
+            <button onClick={() => navigate('/study')} style={{ padding:'14px 32px', borderRadius:'var(--r-lg)', background:'#fff', color:'var(--brand-dark)', border:'none', fontWeight:800, fontSize:15, cursor:'pointer', fontFamily:'var(--font-body)', transition:'all 0.15s' }}
               onMouseOver={e => e.currentTarget.style.transform='translateY(-2px)'}
               onMouseOut={e => e.currentTarget.style.transform=''}
             >Start Free Practice →</button>

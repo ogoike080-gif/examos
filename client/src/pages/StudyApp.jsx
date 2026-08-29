@@ -2,6 +2,10 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import axios from 'axios';
 import { readOfflineCache, writeOfflineCache } from '../utils/offlineCache';
+import { questionAPI, syllabusAPI, subjectAPI } from '../utils/api';
+import MathText from '../components/MathText';
+import ExplanationBox from '../components/ExplanationBox';
+import { FreeTrialPaywall } from './PracticeMode';
 
 const API = '/api';
 const LETTERS = ['A','B','C','D','E'];
@@ -12,29 +16,75 @@ function safeParseArray(v) {
   try { const p = JSON.parse(v); return Array.isArray(p)?p:[]; } catch { return []; }
 }
 
+// Mock/Practice/Study/Adaptive here are all built around answer-choice
+// questions (radio-select, then check against correct_answers) — a theory
+// question with no options silently rendered as an empty, unanswerable
+// blank in that flow. Rather than try to make one UI handle both, theory
+// questions are excluded from these sessions entirely; they get their own
+// year-grouped read-through list on the setup screen instead (see
+// TheoryQuestionsBrowser below).
+//
+// Separately: some imported questions have options that are themselves
+// diagrams/graphs the extraction pipeline couldn't transcribe (e.g. "which
+// number line shows..."), and it fell back to writing the bare letter itself
+// ("A", "B", "C", "D") as the option text instead of real content. That's
+// not a real answer choice — it's indistinguishable from a blank — so a
+// question where EVERY option is just a bare letter is just as unanswerable
+// as one with zero options, and gets excluded the same way. (This mirrors
+// isBareAnswerLetter in routes/questions.js, which the server uses for the
+// same shape of bad data in the explanation field.)
+const BARE_LETTER_OPTION = /^\(?[A-Ea-e]\)?\.?$/;
+function isAnswerable(q) {
+  const opts = safeParseArray(q.options);
+  if (opts.length === 0) return false;
+  return opts.some(o => !BARE_LETTER_OPTION.test(String(o).trim()));
+}
+
 function formatTime(s) {
   const h = Math.floor(s/3600), m = Math.floor((s%3600)/60), sec = s%60;
   if (h>0) return `${h}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;
   return `${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;
 }
 
+// Mobile gets a purpose-built layout (see MobileExamScreen below), desktop keeps
+// the existing sidebar-based one — this just decides which to render.
+function useIsMobile() {
+  const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth <= 768);
+  useEffect(() => {
+    const onResize = () => setIsMobile(window.innerWidth <= 768);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+  return isMobile;
+}
+
 // ── EXAM TYPES & SUBJECTS ─────────────────────────────────────
-const EXAM_TYPES = ['JAMB','WAEC','NECO','NABTEB','POST_UTME','CUSTOM'];
-const SUBJECTS = [
+// Only used as a fallback now if the live exam_bodies fetch fails — see
+// SetupScreen below, which normally loads this list from the server so
+// admin-added exam bodies (e.g. a university's own entrance exam) show up
+// here without a code change.
+const FALLBACK_EXAM_TYPES = ['JAMB','WAEC','NECO','NABTEB','POST_UTME','CUSTOM'];
+// Only used as a fallback if the live subjects fetch fails — see
+// SetupScreen below, which normally loads this list from the server so
+// admin-added subjects (e.g. a university's own "GS COURSE 101" or
+// "MATHS101") show up here without a code change.
+const FALLBACK_SUBJECTS = [
   'Mathematics','English Language','Physics','Chemistry','Biology',
   'Economics','Government','Literature in English','Geography',
   'Computer Studies','Accounting','Agricultural Science',
   'Civic Education','Commerce','Further Mathematics',
   'Technical Drawing','Islamic Studies','Christian Religious Studies',
 ];
-const YEARS = ['All Years','2024','2023','2022','2021','2020','2019','2018',
-  '2017','2016','2015','2014','2013','2012','2011','2010',
-  '2009','2008','2007','2006','2005'];
+// Generated rather than hand-typed, and starting from 1980 rather than 2005 —
+// WAEC/JAMB/NECO past questions commonly go back decades further than a
+// hardcoded recent-years list assumes (this is what was hiding the WAEC 1988
+// import: the year simply wasn't a selectable option).
+const YEARS = ['All Years', ...Array.from({ length: new Date().getFullYear() - 1980 + 1 }, (_, i) => String(new Date().getFullYear() - i))];
 
 // ── SETUP SCREEN ──────────────────────────────────────────────
 function SetupScreen({ onStart }) {
   const [searchParams] = useSearchParams();
-  const [examType,  setExamType]  = useState('JAMB');
+  const [examType,  setExamType]  = useState('WAEC');
   const [subject,   setSubject]   = useState(searchParams.get('subject') || 'Mathematics');
   const [year,      setYear]      = useState('All Years');
   const [count,     setCount]     = useState(60);
@@ -43,10 +93,43 @@ function SetupScreen({ onStart }) {
   const [shuffle,   setShuffle]   = useState(true);
   const [showInfo,  setShowInfo]  = useState(false);
 
-  const examColors = {
-    JAMB:'#2563EB', WAEC:'#16A34A', NECO:'#D97706',
-    NABTEB:'#DC2626', POST_UTME:'#7C3AED', CUSTOM:'#6366F1'
-  };
+  // Was a fixed 6-button list — an exam body added in the admin's Exam Body
+  // Manager (a university's own entrance exam, for instance) had no way to
+  // ever show up here, since this page never asked the server what exists.
+  // Now it reads from the same exam_bodies table Exam Body Manager and the
+  // Import page's dropdown already use — add one there (or from Import's
+  // own "+ Add new exam body" shortcut) and it appears here automatically,
+  // no code change needed. Falls back to the original hardcoded list only
+  // if the fetch itself fails, so this never regresses to a blank screen.
+  const [examTypes, setExamTypes] = useState(FALLBACK_EXAM_TYPES);
+  useEffect(() => {
+    syllabusAPI.examBodies()
+      .then(r => {
+        const bodies = (r.data.exam_bodies || []).map(b => b.code).filter(Boolean);
+        // CUSTOM ("General practice, not tied to one exam body") is a
+        // client-side concept, not a real exam_bodies row — always keep it
+        // available alongside whatever the admin has added.
+        setExamTypes(bodies.length ? [...bodies, 'CUSTOM'] : FALLBACK_EXAM_TYPES);
+      })
+      .catch(() => setExamTypes(FALLBACK_EXAM_TYPES));
+  }, []);
+
+  // Same fix, same reason — subjects only ever came from a hardcoded list
+  // here, so a subject the admin added specifically for a university course
+  // (see the Subjects admin page) had no path to ever appear as an option.
+  const [subjects, setSubjects] = useState(FALLBACK_SUBJECTS);
+  useEffect(() => {
+    subjectAPI.list()
+      .then(r => {
+        const names = (r.data.subjects || []).map(s => s.name).filter(Boolean);
+        setSubjects(names.length ? names : FALLBACK_SUBJECTS);
+      })
+      .catch(() => setSubjects(FALLBACK_SUBJECTS));
+  }, []);
+
+  const EXAM_COLOR_PALETTE = ['#2563EB','#16A34A','#D97706','#DC2626','#7C3AED','#0891B2','#DB2777','#65A30D'];
+  const examColors = { CUSTOM: '#6366F1' };
+  examTypes.forEach((e, i) => { if (!examColors[e]) examColors[e] = EXAM_COLOR_PALETTE[i % EXAM_COLOR_PALETTE.length]; });
 
   return (
     <div style={{ minHeight:'100dvh', background:'#F0F4F8', fontFamily:"'Inter',sans-serif" }}>
@@ -69,7 +152,7 @@ function SetupScreen({ onStart }) {
         <div style={{ background:'#fff', borderRadius:12, padding:'20px', marginBottom:16, boxShadow:'0 1px 4px rgba(0,0,0,0.08)' }}>
           <div style={{ fontSize:11, fontWeight:700, color:'#94A3B8', textTransform:'uppercase', letterSpacing:'0.08em', marginBottom:12 }}>Exam Type</div>
           <div style={{ display:'flex', flexWrap:'wrap', gap:8 }}>
-            {EXAM_TYPES.map(e => (
+            {examTypes.map(e => (
               <button key={e} onClick={() => setExamType(e)} style={{
                 padding:'8px 18px', borderRadius:20, border:`2px solid ${examType===e ? examColors[e] : '#E2E8F0'}`,
                 background: examType===e ? examColors[e] : '#F8FAFC',
@@ -86,7 +169,7 @@ function SetupScreen({ onStart }) {
           <div style={{ background:'#fff', borderRadius:12, padding:'20px', boxShadow:'0 1px 4px rgba(0,0,0,0.08)' }}>
             <div style={{ fontSize:11, fontWeight:700, color:'#94A3B8', textTransform:'uppercase', letterSpacing:'0.08em', marginBottom:10 }}>Subject</div>
             <select value={subject} onChange={e => setSubject(e.target.value)} style={{ width:'100%', padding:'10px 12px', borderRadius:8, border:'1.5px solid #E2E8F0', background:'#F8FAFC', color:'#1E293B', fontFamily:"'Inter',sans-serif", fontSize:14, cursor:'pointer' }}>
-              {SUBJECTS.map(s => <option key={s} value={s}>{s}</option>)}
+              {subjects.map(s => <option key={s} value={s}>{s}</option>)}
             </select>
           </div>
           <div style={{ background:'#fff', borderRadius:12, padding:'20px', boxShadow:'0 1px 4px rgba(0,0,0,0.08)' }}>
@@ -141,6 +224,12 @@ function SetupScreen({ onStart }) {
             ))}
           </div>
         </div>
+
+        {/* Theory / essay questions — these have no multiple-choice options,
+            so they can't be answered inside Mock/Practice/Study/Adaptive
+            (those modes are all radio-select). Instead they're browsable
+            here, grouped by year, for reading through/studying directly. */}
+        <TheoryQuestionsBrowser examType={examType} subject={subject} />
 
         {/* Options row */}
         <div style={{ background:'#fff', borderRadius:12, padding:'16px 20px', marginBottom:16, boxShadow:'0 1px 4px rgba(0,0,0,0.08)', display:'flex', alignItems:'center', justifyContent:'space-between' }}>
@@ -198,9 +287,134 @@ function SetupScreen({ onStart }) {
   );
 }
 
+// ── THEORY QUESTIONS BROWSER ──────────────────────────────────
+// Groups no-option (essay/theory) questions by year for the given
+// subject + exam type, so they can be read/studied directly rather than
+// attempted through the MCQ session flow they don't fit into. Always
+// fetches across every year (ignores the Year selector above it) since
+// the point is exactly to list them "on every year".
+function TheoryQuestionsBrowser({ examType, subject }) {
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [questions, setQuestions] = useState(null); // null = not yet loaded
+  const [openYears, setOpenYears] = useState(() => new Set());
+  const [revealed, setRevealed] = useState(() => new Set());
+
+  useEffect(() => {
+    // Collapse and drop stale results whenever the scope changes — the
+    // list only (re)loads once the section is actually opened.
+    setQuestions(null);
+    setOpenYears(new Set());
+    setRevealed(new Set());
+  }, [examType, subject]);
+
+  const load = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const params = { type: 'essay', limit: 200 };
+      if (subject !== 'All') params.subject = subject;
+      if (examType !== 'CUSTOM') params.exam_type = examType;
+      const res = await axios.get(`${API}/questions`, { params });
+      setQuestions(res.data.questions || []);
+    } catch {
+      setError("Couldn't load theory questions — try again.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const toggle = () => {
+    const next = !open;
+    setOpen(next);
+    if (next && questions === null && !loading) load();
+  };
+
+  // Year lives in `tags` (see routes/questions.js) — pull out the first
+  // 4-digit tag that looks like a year; anything without one groups under
+  // "Undated" rather than getting silently dropped.
+  const yearOf = (q) => {
+    const tags = safeParseArray(q.tags);
+    const y = tags.find(t => /^(19|20)\d{2}$/.test(String(t).trim()));
+    return y ? String(y).trim() : 'Undated';
+  };
+
+  const groups = {};
+  if (questions) {
+    for (const q of questions) {
+      const y = yearOf(q);
+      (groups[y] = groups[y] || []).push(q);
+    }
+  }
+  const years = Object.keys(groups).sort((a, b) => (a === 'Undated' ? 1 : b === 'Undated' ? -1 : b.localeCompare(a)));
+
+  const toggleYear = (y) => setOpenYears(s => { const n = new Set(s); n.has(y) ? n.delete(y) : n.add(y); return n; });
+  const toggleReveal = (id) => setRevealed(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+
+  return (
+    <div style={{ background:'#fff', borderRadius:12, overflow:'hidden', marginBottom:16, boxShadow:'0 1px 4px rgba(0,0,0,0.08)' }}>
+      <button onClick={toggle} style={{ width:'100%', padding:'14px 20px', background:'none', border:'none', cursor:'pointer', display:'flex', justifyContent:'space-between', alignItems:'center', fontFamily:"'Inter',sans-serif" }}>
+        <span style={{ fontSize:13, fontWeight:700, color:'#1E3A5F' }}>📚 Theory Questions (by year){questions ? ` — ${questions.length}` : ''}</span>
+        <span style={{ fontSize:12, color:'#94A3B8', transform:open?'rotate(180deg)':'none', transition:'transform 0.2s' }}>▼</span>
+      </button>
+      {open && (
+        <div style={{ padding:'0 20px 16px', borderTop:'1px solid #F1F5F9' }}>
+          {loading && (
+            <div style={{ padding:'16px 0', fontSize:13, color:'#94A3B8' }}>Loading…</div>
+          )}
+          {error && (
+            <div style={{ padding:'12px 0', fontSize:13, color:'#DC2626' }}>{error}</div>
+          )}
+          {!loading && !error && questions && questions.length === 0 && (
+            <div style={{ padding:'16px 0', fontSize:13, color:'#94A3B8' }}>
+              No theory questions found for {subject === 'All' ? 'any subject' : subject}{examType !== 'CUSTOM' ? ` · ${examType}` : ''}.
+            </div>
+          )}
+          {!loading && !error && years.map(y => (
+            <div key={y} style={{ borderBottom:'1px solid #F1F5F9', paddingTop:12 }}>
+              <button onClick={() => toggleYear(y)} style={{ width:'100%', background:'none', border:'none', cursor:'pointer', display:'flex', justifyContent:'space-between', alignItems:'center', padding:'4px 0 12px', fontFamily:"'Inter',sans-serif" }}>
+                <span style={{ fontSize:13, fontWeight:700, color:'#1E293B' }}>{y}<span style={{ fontWeight:500, color:'#94A3B8' }}> · {groups[y].length} question{groups[y].length!==1?'s':''}</span></span>
+                <span style={{ fontSize:11, color:'#94A3B8', transform:openYears.has(y)?'rotate(180deg)':'none', transition:'transform 0.2s' }}>▼</span>
+              </button>
+              {openYears.has(y) && (
+                <div style={{ display:'flex', flexDirection:'column', gap:10, paddingBottom:14 }}>
+                  {groups[y].map((q, i) => (
+                    <div key={q.id} style={{ background:'#F8FAFC', border:'1px solid #E2E8F0', borderRadius:10, padding:'12px 14px' }}>
+                      <div style={{ fontSize:13, color:'#1E293B', lineHeight:1.6, marginBottom: (q.explanation || revealed.has(q.id)) ? 8 : 0 }}>
+                        <b style={{ color:'#94A3B8', marginRight:6 }}>{q.question_number ?? i+1}.</b>
+                        <MathText text={q.question_text} inline />
+                      </div>
+                      {q.media_url && (
+                        <img src={q.media_url} alt="Question diagram" style={{ display:'block', maxWidth:'100%', width:'auto', height:'auto', maxHeight:280, objectFit:'contain', borderRadius:8, border:'1px solid #E2E8F0', marginBottom:8 }} />
+                      )}
+                      {q.explanation && (
+                        revealed.has(q.id) ? (
+                          <div style={{ fontSize:12.5, color:'#334155', lineHeight:1.6, borderTop:'1px dashed #E2E8F0', paddingTop:8 }}>
+                            <MathText text={q.explanation} inline />
+                          </div>
+                        ) : (
+                          <button onClick={() => toggleReveal(q.id)} style={{ fontSize:12, fontWeight:700, color:'#2563EB', background:'none', border:'none', cursor:'pointer', padding:0 }}>
+                            Show answer / explanation
+                          </button>
+                        )
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── SAVE FOR OFFLINE ─────────────────────────────────────────
 function SaveOfflineButton({ config }) {
-  const [state, setState] = useState('idle'); // idle | saving | saved | error | already
+  const [state, setState] = useState('idle'); // idle | saving | explaining | saved | error | already
+  const [explainProgress, setExplainProgress] = useState(null); // { done, total }
 
   useEffect(() => {
     const key = `examos-offline-qset:${config.subject}:${config.examType}:${config.year}`;
@@ -216,8 +430,36 @@ function SaveOfflineButton({ config }) {
       if (config.examType !== 'CUSTOM') params.exam_type = config.examType;
       if (config.year !== 'All Years') params.year = config.year;
       const res = await axios.get(`${API}/questions`, { params });
-      const qs = (res.data.questions || []).map(q => ({ ...q, options: safeParseArray(q.options) }));
+      const qs = (res.data.questions || [])
+        .map(q => ({ ...q, options: safeParseArray(q.options) }))
+        .filter(isAnswerable);
       if (!qs.length) return setState('error');
+
+      // The whole point of "save for offline" is being able to study with
+      // no connection at all — including reading the explanation for
+      // whichever answer you got wrong. A question that had never been
+      // opened by anyone before had no explanation generated yet, and once
+      // actually offline there'd be no network left to fetch one. So before
+      // finishing the save, fill in any still-missing explanations now,
+      // while there's still a connection to do it with.
+      const missing = qs.filter(q => !q.explanation);
+      if (missing.length) {
+        setState('explaining');
+        setExplainProgress({ done: 0, total: missing.length });
+        for (let i = 0; i < missing.length; i++) {
+          try {
+            const r = await questionAPI.generateExplanation(missing[i].id);
+            missing[i].explanation = r.data?.explanation || '';
+          } catch (e) {
+            // A quota-exhausted or otherwise failed explanation shouldn't
+            // block saving the rest of the set for offline use — this
+            // question just won't have one until a later save/backfill.
+            if (e.response?.data?.code === 'AI_QUOTA_EXCEEDED') break; // no point continuing this run
+          }
+          setExplainProgress({ done: i + 1, total: missing.length });
+        }
+      }
+
       const key = `examos-offline-qset:${config.subject}:${config.examType}:${config.year}`;
       writeOfflineCache(key, qs);
       setState('saved');
@@ -225,28 +467,30 @@ function SaveOfflineButton({ config }) {
   };
 
   const labels = {
-    idle:    { text: '📥 Save for Offline', bg:'#fff', color:'#2563EB', border:'2px solid #2563EB' },
-    saving:  { text: '⏳ Saving…',           bg:'#fff', color:'#94A3B8', border:'2px solid #E2E8F0' },
-    saved:   { text: '✅ Saved for Offline', bg:'#ECFDF5', color:'#16A34A', border:'2px solid #16A34A' },
-    already: { text: '✅ Already Saved · Tap to Refresh', bg:'#ECFDF5', color:'#16A34A', border:'2px solid #16A34A' },
-    error:   { text: '⚠️ Couldn\'t save — check connection', bg:'#FEF2F2', color:'#DC2626', border:'2px solid #FCA5A5' },
+    idle:      { text: '📥 Save for Offline', bg:'#fff', color:'#2563EB', border:'2px solid #2563EB' },
+    saving:    { text: '⏳ Saving…',           bg:'#fff', color:'#94A3B8', border:'2px solid #E2E8F0' },
+    explaining:{ text: explainProgress ? `⏳ Preparing explanations… ${explainProgress.done}/${explainProgress.total}` : '⏳ Preparing explanations…', bg:'#fff', color:'#94A3B8', border:'2px solid #E2E8F0' },
+    saved:     { text: '✅ Saved for Offline', bg:'#ECFDF5', color:'#16A34A', border:'2px solid #16A34A' },
+    already:   { text: '✅ Already Saved · Tap to Refresh', bg:'#ECFDF5', color:'#16A34A', border:'2px solid #16A34A' },
+    error:     { text: '⚠️ Couldn\'t save — check connection', bg:'#FEF2F2', color:'#DC2626', border:'2px solid #FCA5A5' },
   };
   const l = labels[state];
+  const busy = state === 'saving' || state === 'explaining';
 
   return (
     <button
       onClick={handleSave}
-      disabled={state === 'saving'}
+      disabled={busy}
       style={{
         padding:'12px 16px', borderRadius:10, fontSize:13, fontWeight:700,
-        cursor: state==='saving' ? 'default' : 'pointer',
+        cursor: busy ? 'default' : 'pointer',
         fontFamily:"'Inter',sans-serif", transition:'all 0.15s',
         background:l.bg, color:l.color, border:l.border,
       }}
     >
       {l.text}
       <div style={{ fontSize:10.5, fontWeight:500, opacity:0.75, marginTop:2 }}>
-        Practice offline later on this subject, even with no connection
+        Practice offline later on this subject, even with no connection — every question comes with its full explanation, ready with no signal needed
       </div>
     </button>
   );
@@ -326,11 +570,19 @@ function ExamScreen({ config, onFinish }) {
   const [isOnline,   setIsOnline]   = useState(navigator.onLine);
   const [lowData,    setLowData]    = useState(() => localStorage.getItem('examos-lowdata') === '1');
   const [adaptiveDifficulty, setAdaptiveDifficulty] = useState('medium');
+  // Set from the questions fetch when this is a free-trial visitor (see
+  // routes/questions.js) — remaining===0 means this batch is the last of
+  // their 5 free questions. showPaywall auto-flips true once they've seen
+  // the answer to that last question (effect below), same trigger pattern
+  // as PracticeMode.jsx's own engine.
+  const [freeTrial,  setFreeTrial]  = useState(null);
+  const [showPaywall,setShowPaywall]= useState(false);
   const poolRef = useRef({ easy: [], medium: [], hard: [] });
   const adaptedChunksRef = useRef(new Set());
   const ADAPT_CHUNK = 5;
   const timerRef = useRef(null);
   const submittedRef = useRef(false);
+  const isMobile = useIsMobile();
 
   useEffect(() => {
     const goOnline = () => setIsOnline(true);
@@ -347,6 +599,19 @@ function ExamScreen({ config, onFinish }) {
   const cacheKey = `examos-offline-qset:${config.subject}:${config.examType}:${config.year}`;
 
   useEffect(() => { loadQuestions(); }, []);
+
+  // Same auto-popup pattern as PracticeMode.jsx's engine — once the free
+  // trial's last question has its answer revealed, give them a couple
+  // seconds to actually read it, then show the paywall right over the
+  // session instead of a redirect.
+  useEffect(() => {
+    if (!freeTrial || freeTrial.remaining > 0) return;
+    if (!questions.length) return;
+    const lastQ = questions[questions.length - 1];
+    if (current !== questions.length - 1 || !revealed[lastQ?.id]) return;
+    const t = setTimeout(() => setShowPaywall(true), 2500);
+    return () => clearTimeout(t);
+  }, [current, revealed, freeTrial, questions]);
 
   // Adaptive AI: every time the student crosses into a new 5-question chunk
   // for the first time, look at how they did in the chunk just completed and
@@ -410,7 +675,7 @@ function ExamScreen({ config, onFinish }) {
     if (!navigator.onLine) {
       const cached = readOfflineCache(cacheKey);
       if (cached?.length) {
-        let qs = cached;
+        let qs = cached.filter(isAnswerable);
         if (config.shuffle) qs = [...qs].sort(() => Math.random() - 0.5);
         setQuestions(qs.slice(0, config.count));
         setUsingOfflineCache(true);
@@ -430,7 +695,9 @@ function ExamScreen({ config, onFinish }) {
       if (config.examType !== 'CUSTOM') params.exam_type = config.examType;
       if (config.year !== 'All Years') params.year = config.year;
       const res = await axios.get(`${API}/questions`, { params });
-      let qs = (res.data.questions || []).map(q => ({ ...q, options: safeParseArray(q.options) }));
+      let qs = (res.data.questions || [])
+        .map(q => ({ ...q, options: safeParseArray(q.options) }))
+        .filter(isAnswerable); // theory/essay questions have no options — see isAnswerable above
 
       if (config.mode === 'adaptive' && qs.length > 0) {
         const pool = { easy: [], medium: [], hard: [] };
@@ -452,14 +719,27 @@ function ExamScreen({ config, onFinish }) {
       else writeOfflineCache(cacheKey, qs); // silently save for next time we're offline
       if (config.shuffle) qs = qs.sort(() => Math.random() - 0.5);
       setQuestions(qs.slice(0, config.count));
-    } catch {
-      // Network call failed even though navigator.onLine said true (flaky connection) — fall back to cache
-      const cached = readOfflineCache(cacheKey);
-      if (cached?.length) {
-        setQuestions(cached.slice(0, config.count));
-        setUsingOfflineCache(true);
+      if (res.data.free_trial) setFreeTrial(res.data.free_trial);
+    } catch (err) {
+      // Quota already exhausted before this session could even start (e.g.
+      // this browser used its 5 free questions in an earlier visit) — show
+      // the paywall directly instead of quietly loading demo/cached
+      // questions, which would let them "practice" with no real path to
+      // upgrade. This is the in-page equivalent of what a global redirect
+      // used to try to do (and broke — see main.jsx for why that's gone).
+      if (err.response?.status === 402 && err.response?.data?.code === 'FREE_LIMIT_REACHED') {
+        setFreeTrial({ remaining: 0, limit: err.response.data.free_limit || 5 });
+        setShowPaywall(true);
+        setQuestions([]);
       } else {
-        setQuestions(makeDemoQuestions(config.subject, config.count));
+        // Network call failed even though navigator.onLine said true (flaky connection) — fall back to cache
+        const cached = readOfflineCache(cacheKey);
+        if (cached?.length) {
+          setQuestions(cached.slice(0, config.count));
+          setUsingOfflineCache(true);
+        } else {
+          setQuestions(makeDemoQuestions(config.subject, config.count));
+        }
       }
     } finally { setLoading(false); }
   };
@@ -480,6 +760,16 @@ function ExamScreen({ config, onFinish }) {
 
   const handleSubmit = useCallback((auto=false) => {
     if (submittedRef.current) return;
+    // Catch-all for the free-trial paywall — the per-question effect above
+    // only fires once the last question's answer is revealed, which never
+    // happens if it was skipped instead of answered (exactly what was
+    // happening: Submit went straight through to the results screen with
+    // Q5 skipped and the paywall never seen). This guarantees it still
+    // appears before results are reachable, answered-out or not.
+    if (freeTrial && freeTrial.remaining === 0 && !showPaywall) {
+      setShowPaywall(true);
+      return;
+    }
     submittedRef.current = true;
     clearInterval(timerRef.current);
     const score = questions.reduce((s,q) => {
@@ -488,14 +778,25 @@ function ExamScreen({ config, onFinish }) {
       return ans && correct.map(c=>c.toLowerCase().trim()).includes(ans.toLowerCase().trim()) ? s+1 : s;
     }, 0);
     onFinish({ questions, answers, score, total: questions.length, auto });
-  }, [questions, answers]);
+  }, [questions, answers, freeTrial, showPaywall]);
 
   if (loading) return (
-    <div style={{ minHeight:'100dvh', display:'flex', alignItems:'center', justifyContent:'center', flexDirection:'column', gap:16, background:'#F0F4F8' }}>
+    <div style={{ minHeight:'100dvh', display:'flex', alignItems:'center', justifyContent:'center', flexDirection:'column', gap:16, background: isMobile ? '#0F172A' : '#F0F4F8' }}>
       <div style={{ width:40, height:40, border:'4px solid #E2E8F0', borderTop:'4px solid #2563EB', borderRadius:'50%', animation:'spin 0.7s linear infinite' }}/>
-      <p style={{ color:'#64748B', fontFamily:"'Inter',sans-serif" }}>Loading {config.count} questions...</p>
+      <p style={{ color: isMobile ? 'rgba(255,255,255,0.7)' : '#64748B', fontFamily:"'Inter',sans-serif" }}>Loading {config.count} questions...</p>
     </div>
   );
+
+  // Quota was already exhausted before this session could even start (see
+  // loadQuestions' catch block above) — nothing to practice on, so show
+  // just the paywall rather than the question engine against an empty list.
+  if (questions.length === 0 && showPaywall) {
+    return (
+      <div style={{ minHeight:'100dvh', background: isMobile ? '#0F172A' : '#F0F4F8' }}>
+        <FreeTrialPaywall onDismiss={() => window.history.back()} />
+      </div>
+    );
+  }
 
   const q = questions[current];
   if (!q) return null;
@@ -515,6 +816,24 @@ function ExamScreen({ config, onFinish }) {
     return 'unanswered';
   };
   const palColors = { current:{bg:'#2563EB',color:'#fff',border:'#2563EB'}, answered:{bg:'#DCFCE7',color:'#16A34A',border:'#16A34A'}, bookmarked:{bg:'#FEF3C7',color:'#D97706',border:'#D97706'}, unanswered:{bg:'#fff',color:'#64748B',border:'#CBD5E1'} };
+
+  if (isMobile) {
+    return (
+      <>
+        <MobileExamScreen
+          config={config} questions={questions} answers={answers} revealed={revealed}
+          bookmarked={bookmarked} current={current} setCurrent={setCurrent}
+          timeLeft={timeLeft} showCalc={showCalc} setShowCalc={setShowCalc}
+          attempts={attempts} isOnline={isOnline} usingOfflineCache={usingOfflineCache}
+          lowData={lowData} toggleLowData={toggleLowData} adaptiveDifficulty={adaptiveDifficulty}
+          selectAnswer={selectAnswer} handleSubmit={handleSubmit} setBookmarked={setBookmarked}
+          setRevealed={setRevealed} onFinish={onFinish} submittedRef={submittedRef}
+          paletteStatus={paletteStatus}
+        />
+        {showPaywall && <FreeTrialPaywall onDismiss={() => setShowPaywall(false)} />}
+      </>
+    );
+  }
 
   return (
     <div style={{ minHeight:'100dvh', background:'#F0F4F8', fontFamily:"'Inter',sans-serif", display:'flex', flexDirection:'column' }}>
@@ -618,9 +937,9 @@ function ExamScreen({ config, onFinish }) {
 
             {/* Question text */}
             <div style={{ background:'#fff', border:'1px solid #E2E8F0', borderRadius:12, padding:'20px 22px', marginBottom:18, fontSize:15, lineHeight:1.85, color:'#1E293B', fontWeight:500, boxShadow:'0 1px 4px rgba(0,0,0,0.05)' }}>
-              {q.question_text}
+              <MathText text={q.question_text} />
               {q.media_url && !lowData && (
-                <img src={q.media_url} alt="Question diagram" style={{ display:'block', maxWidth:'100%', maxHeight:340, marginTop:14, borderRadius:10, border:'1px solid #E2E8F0' }} />
+                <img src={q.media_url} alt="Question diagram" style={{ display:'block', maxWidth:'100%', width:'auto', height:'auto', maxHeight:400, objectFit:'contain', marginTop:14, borderRadius:10, border:'1px solid #E2E8F0' }} />
               )}
               {q.media_url && lowData && (
                 <div style={{ marginTop:14, padding:'10px 14px', background:'#F1F5F9', borderRadius:10, border:'1px dashed #CBD5E1', fontSize:12.5, color:'#64748B' }}>
@@ -655,7 +974,7 @@ function ExamScreen({ config, onFinish }) {
                     {/* Letter */}
                     <span style={{ fontSize:13, fontWeight:800, color:radioColor, flexShrink:0, minWidth:16, marginTop:1 }}>{LETTERS[i]}</span>
                     {/* Text */}
-                    <span style={{ fontSize:14, fontWeight: isSelected?600:400, color:textColor, lineHeight:1.6 }}>{opt}</span>
+                    <span style={{ fontSize:14, fontWeight: isSelected?600:400, color:textColor, lineHeight:1.6 }}><MathText text={opt} inline /></span>
                     {isRevealed && isCorrect && <span style={{ marginLeft:'auto', fontSize:16, flexShrink:0 }}>✓</span>}
                     {isRevealed && isSelected && !isCorrect && <span style={{ marginLeft:'auto', fontSize:16, flexShrink:0 }}>✗</span>}
                   </button>
@@ -664,10 +983,9 @@ function ExamScreen({ config, onFinish }) {
             </div>
 
             {/* Explanation */}
-            {isRevealed && q.explanation && (
-              <div style={{ background:'#EFF6FF', border:'1px solid #BFDBFE', borderRadius:10, padding:'14px 16px', marginBottom:16, fontSize:13, color:'#1E40AF', lineHeight:1.7 }}>
-                <div style={{ fontWeight:700, marginBottom:6 }}>💡 Explanation</div>
-                {q.explanation}
+            {isRevealed && (
+              <div style={{ marginBottom:16 }}>
+                <ExplanationBox question={q} theme="light" />
               </div>
             )}
           </div>
@@ -695,10 +1013,302 @@ function ExamScreen({ config, onFinish }) {
       </div>
 
       {showCalc && <SimpleCalc onClose={() => setShowCalc(false)} />}
+      {showPaywall && <FreeTrialPaywall onDismiss={() => setShowPaywall(false)} />}
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
     </div>
   );
 }
+
+// ── MOBILE EXAM SCREEN ───────────────────────────────────────
+// Purpose-built for phones: full-width question focus, no fixed sidebar,
+// question navigator lives in a bottom sheet instead of eating screen width.
+function MobileExamScreen({
+  config, questions, answers, revealed, bookmarked, current, setCurrent,
+  timeLeft, showCalc, setShowCalc, attempts, isOnline, usingOfflineCache,
+  lowData, toggleLowData, adaptiveDifficulty, selectAnswer, handleSubmit,
+  setBookmarked, setRevealed, onFinish, submittedRef, paletteStatus,
+}) {
+  const [showNav, setShowNav] = useState(false);
+  const [showTools, setShowTools] = useState(false);
+  const [showSubmitConfirm, setShowSubmitConfirm] = useState(false);
+
+  const q = questions[current];
+  if (!q) return null;
+  const opts = safeParseArray(q.options);
+  const correctAnswers = safeParseArray(q.correct_answers).map(c => c.toLowerCase().trim());
+  const selected = answers[q.id];
+  const isRevealed = revealed[q.id];
+  const isBookmarked = bookmarked.has(q.id);
+  const answeredCount = Object.keys(answers).length;
+  const remainingCount = questions.length - answeredCount;
+  const bookmarkedCount = bookmarked.size;
+  const isLast = current === questions.length - 1;
+  const isWarning = timeLeft < 300 && config.mode !== 'study';
+  const isCritical = timeLeft < 60 && config.mode !== 'study';
+  const progressPct = Math.round(((current + 1) / questions.length) * 100);
+
+  const palColors = { current:{bg:'#2563EB',color:'#fff',border:'#2563EB'}, answered:{bg:'#DCFCE7',color:'#16A34A',border:'#16A34A'}, bookmarked:{bg:'#FEF3C7',color:'#D97706',border:'#D97706'}, unanswered:{bg:'#fff',color:'#64748B',border:'#E2E8F0'} };
+
+  const goTo = (i) => { setCurrent(i); setShowNav(false); };
+  const toggleBookmark = () => setBookmarked(b => { const n = new Set(b); n.has(q.id) ? n.delete(q.id) : n.add(q.id); return n; });
+
+  const encouragement =
+    progressPct >= 100 ? "Last one — you've got this!" :
+    progressPct >= 75  ? "Almost there. Keep going." :
+    progressPct >= 50  ? "Halfway done. Great pace." :
+    progressPct >= 25  ? "Good start. Stay focused." : null;
+
+  return (
+    <div style={{ minHeight:'100dvh', background:'#0F172A', fontFamily:"'Inter',sans-serif", display:'flex', flexDirection:'column' }}>
+
+      {/* ── STICKY HEADER ── */}
+      <div style={{ position:'sticky', top:0, zIndex:30, background:'#1E293B', padding:'10px 14px 8px', flexShrink:0, boxShadow:'0 2px 8px rgba(0,0,0,0.2)' }}>
+        <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+          <button onClick={() => onFinish({ questions, answers, score:0, total:questions.length, cancelled:true })}
+            style={{ background:'none', border:'none', color:'rgba(255,255,255,0.8)', fontSize:18, padding:4, cursor:'pointer', flexShrink:0 }}>←</button>
+          <div style={{ flex:1, minWidth:0, textAlign:'center' }}>
+            <div style={{ color:'#fff', fontWeight:800, fontSize:14, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{config.subject}</div>
+            <div style={{ color:'rgba(255,255,255,0.55)', fontSize:10.5 }}>{config.examType} · {config.mode.toUpperCase()}</div>
+          </div>
+          <button onClick={() => setShowNav(true)} style={{
+            display:'flex', alignItems:'center', gap:4, background:'rgba(255,255,255,0.1)', border:'none',
+            borderRadius:20, padding:'6px 12px', color:'#fff', fontWeight:700, fontSize:12.5, cursor:'pointer', flexShrink:0,
+          }}>
+            {current+1}/{questions.length} <span style={{ fontSize:9 }}>▾</span>
+          </button>
+        </div>
+
+        {/* Progress bar */}
+        <div style={{ height:4, background:'rgba(255,255,255,0.12)', borderRadius:2, marginTop:10, overflow:'hidden' }}>
+          <div style={{ height:'100%', width:`${progressPct}%`, background:'linear-gradient(90deg,#3B82F6,#60A5FA)', borderRadius:2, transition:'width 0.25s ease' }}/>
+        </div>
+        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginTop:5 }}>
+          <span style={{ color:'rgba(255,255,255,0.5)', fontSize:10.5 }}>Question {current+1} of {questions.length} · {progressPct}%</span>
+          <span style={{ fontFamily:'monospace', fontSize:12.5, fontWeight:700, color: isCritical?'#FCA5A5':isWarning?'#FCD34D':'rgba(255,255,255,0.85)' }}>
+            ⏱ {config.mode==='study' ? '∞' : formatTime(timeLeft)}
+          </span>
+        </div>
+      </div>
+
+      {/* ── STUDY TOOLS STRIP ── */}
+      <div style={{ display:'flex', alignItems:'center', gap:8, padding:'8px 14px', background:'#1E293B', borderTop:'1px solid rgba(255,255,255,0.06)', flexShrink:0, overflowX:'auto' }}>
+        <button onClick={() => setShowCalc(c=>!c)} style={toolChipStyle}>🧮 Calculator</button>
+        <button onClick={toggleBookmark} style={{ ...toolChipStyle, background: isBookmarked ? 'rgba(217,119,6,0.25)' : toolChipStyle.background, color: isBookmarked ? '#FCD34D' : toolChipStyle.color }}>
+          {isBookmarked ? '🔖 Saved' : '🔖 Bookmark'}
+        </button>
+        <button onClick={() => setRevealed(r=>({...r,[q.id]:true}))} style={toolChipStyle}>💡 Explanation</button>
+        <button onClick={() => setShowTools(true)} style={toolChipStyle}>⋮ More</button>
+        <div style={{ flex:1 }}/>
+      </div>
+
+      {/* ── QUESTION CONTENT (scrollable) ── */}
+      <div style={{ flex:1, overflowY:'auto', padding:'16px 16px 100px' }}>
+        {encouragement && (
+          <div style={{ textAlign:'center', color:'rgba(255,255,255,0.4)', fontSize:11.5, marginBottom:12, fontStyle:'italic' }}>{encouragement}</div>
+        )}
+
+        <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:12, flexWrap:'wrap' }}>
+          <span style={{ fontSize:11.5, fontWeight:700, color:'#93C5FD', background:'rgba(59,130,246,0.15)', padding:'3px 11px', borderRadius:20 }}>Question {current+1}</span>
+          {isBookmarked && <span style={{ fontSize:11, fontWeight:700, color:'#FCD34D', background:'rgba(217,119,6,0.18)', padding:'3px 10px', borderRadius:20 }}>🔖 Bookmarked</span>}
+          {config.mode === 'adaptive' && (
+            <span style={{ fontSize:11, fontWeight:700, padding:'3px 10px', borderRadius:20, background:'rgba(255,255,255,0.08)', color: adaptiveDifficulty==='hard'?'#FCA5A5':adaptiveDifficulty==='easy'?'#86EFAC':'#93C5FD' }}>
+              🎯 {adaptiveDifficulty}
+            </span>
+          )}
+          {(!isOnline || usingOfflineCache) && (
+            <span style={{ fontSize:11, fontWeight:700, color:'#FCD34D', background:'rgba(217,119,6,0.15)', padding:'3px 10px', borderRadius:20 }}>📡 {!isOnline?'Offline':'Saved set'}</span>
+          )}
+        </div>
+
+        {/* Question card */}
+        <div style={{ background:'#1E293B', border:'1px solid rgba(255,255,255,0.08)', borderRadius:16, padding:'18px 18px', marginBottom:16, fontSize:17, lineHeight:1.65, color:'#F1F5F9', fontWeight:500 }}>
+          <MathText text={q.question_text} />
+          {q.media_url && !lowData && (
+            <img src={q.media_url} alt="Question diagram" style={{ display:'block', maxWidth:'100%', width:'auto', height:'auto', maxHeight:340, objectFit:'contain', marginTop:14, borderRadius:10, border:'1px solid rgba(255,255,255,0.1)' }} />
+          )}
+          {q.media_url && lowData && (
+            <div style={{ marginTop:14, padding:'10px 14px', background:'rgba(255,255,255,0.05)', borderRadius:10, border:'1px dashed rgba(255,255,255,0.15)', fontSize:12.5, color:'rgba(255,255,255,0.5)' }}>
+              🖼️ Diagram hidden — Low Data mode is on
+            </div>
+          )}
+        </div>
+
+        {/* Options — full-width touch cards */}
+        <div style={{ display:'flex', flexDirection:'column', gap:11, marginBottom:18 }}>
+          {opts.map((opt, i) => {
+            const isSelected = selected === opt;
+            const isCorrect = correctAnswers.includes(opt.toLowerCase().trim());
+            let bg='rgba(255,255,255,0.04)', border='rgba(255,255,255,0.12)', textColor='#E2E8F0', badgeColor='rgba(255,255,255,0.5)';
+            if (isRevealed) {
+              if (isCorrect)        { bg='rgba(22,163,74,0.15)'; border='#16A34A'; textColor='#86EFAC'; badgeColor='#16A34A'; }
+              else if (isSelected)  { bg='rgba(220,38,38,0.15)'; border='#EF4444'; textColor='#FCA5A5'; badgeColor='#EF4444'; }
+            } else if (isSelected)  { bg='rgba(37,99,235,0.18)'; border='#3B82F6'; textColor='#BFDBFE'; badgeColor='#3B82F6'; }
+
+            return (
+              <button
+                key={i}
+                onClick={() => !submittedRef.current && selectAnswer(q.id, opt)}
+                style={{
+                  display:'flex', alignItems:'center', gap:14, padding:'16px 16px', minHeight:56,
+                  background:bg, border:`1.5px solid ${border}`, borderRadius:14,
+                  cursor: submittedRef.current ? 'default' : 'pointer', textAlign:'left', width:'100%',
+                  transition:'background 0.12s, border-color 0.12s', fontFamily:"'Inter',sans-serif",
+                  WebkitTapHighlightColor:'transparent',
+                }}
+              >
+                <span style={{
+                  width:30, height:30, borderRadius:9, border:`1.5px solid ${badgeColor}`, background: isSelected||(isRevealed&&isCorrect) ? badgeColor : 'transparent',
+                  display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0,
+                  fontSize:13, fontWeight:800, color: isSelected||(isRevealed&&isCorrect) ? '#fff' : badgeColor,
+                }}>{LETTERS[i]}</span>
+                <span style={{ fontSize:15, fontWeight: isSelected?600:400, color:textColor, lineHeight:1.5, flex:1 }}><MathText text={opt} inline /></span>
+                {isRevealed && isCorrect && <span style={{ fontSize:18, flexShrink:0 }}>✓</span>}
+                {isRevealed && isSelected && !isCorrect && <span style={{ fontSize:18, flexShrink:0 }}>✗</span>}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Explanation */}
+        {isRevealed && (
+          <div style={{ marginBottom:16 }}>
+            <ExplanationBox question={q} theme="dark" />
+          </div>
+        )}
+      </div>
+
+      {/* ── STICKY BOTTOM ACTION BAR ── */}
+      <div style={{ position:'sticky', bottom:0, background:'#1E293B', borderTop:'1px solid rgba(255,255,255,0.08)', padding:'10px 14px', display:'flex', alignItems:'center', gap:8, flexShrink:0, paddingBottom:'calc(10px + env(safe-area-inset-bottom))' }}>
+        <button onClick={toggleBookmark} style={{
+          width:44, height:44, borderRadius:12, flexShrink:0, border:'1.5px solid rgba(255,255,255,0.15)',
+          background: isBookmarked ? 'rgba(217,119,6,0.2)' : 'rgba(255,255,255,0.05)', fontSize:18, cursor:'pointer',
+        }}>🔖</button>
+        <button onClick={() => setCurrent(c=>Math.max(0,c-1))} disabled={current===0} style={{
+          flex:1, padding:'13px 0', borderRadius:12, border:'1.5px solid rgba(255,255,255,0.15)',
+          background:'transparent', color: current===0?'rgba(255,255,255,0.25)':'rgba(255,255,255,0.85)',
+          fontWeight:700, fontSize:14, cursor: current===0?'default':'pointer', fontFamily:"'Inter',sans-serif",
+        }}>← Prev</button>
+        {isLast ? (
+          <button onClick={() => setShowSubmitConfirm(true)} style={{
+            flex:1.4, padding:'13px 0', borderRadius:12, border:'none', background:'#DC2626',
+            color:'#fff', fontWeight:800, fontSize:14, cursor:'pointer', fontFamily:"'Inter',sans-serif",
+          }}>Submit Exam</button>
+        ) : (
+          <button onClick={() => setCurrent(c=>Math.min(questions.length-1,c+1))} style={{
+            flex:1.4, padding:'13px 0', borderRadius:12, border:'none', background:'#2563EB',
+            color:'#fff', fontWeight:800, fontSize:14, cursor:'pointer', fontFamily:"'Inter',sans-serif",
+          }}>Next →</button>
+        )}
+      </div>
+
+      {/* ── QUESTION NAVIGATOR BOTTOM SHEET ── */}
+      {showNav && (
+        <div style={{ position:'fixed', inset:0, zIndex:50, display:'flex', alignItems:'flex-end' }}>
+          <div onClick={() => setShowNav(false)} style={{ position:'absolute', inset:0, background:'rgba(0,0,0,0.55)' }}/>
+          <div style={{ position:'relative', width:'100%', maxHeight:'75vh', background:'#1E293B', borderRadius:'20px 20px 0 0', padding:'14px 18px calc(18px + env(safe-area-inset-bottom))', display:'flex', flexDirection:'column' }}>
+            <div style={{ width:36, height:4, background:'rgba(255,255,255,0.2)', borderRadius:2, margin:'0 auto 14px' }}/>
+            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:12 }}>
+              <span style={{ color:'#fff', fontWeight:800, fontSize:15 }}>Questions</span>
+              <button onClick={() => setShowNav(false)} style={{ background:'none', border:'none', color:'rgba(255,255,255,0.6)', fontSize:20, cursor:'pointer' }}>✕</button>
+            </div>
+
+            <div style={{ overflowY:'auto', flex:1 }}>
+              <div style={{ display:'grid', gridTemplateColumns:'repeat(6,1fr)', gap:8, marginBottom:16 }}>
+                {questions.map((_,i) => {
+                  const st = paletteStatus(i);
+                  const pc = palColors[st];
+                  return (
+                    <button key={i} onClick={() => goTo(i)} style={{
+                      aspectRatio:'1', borderRadius:10, border:`1.5px solid ${pc.border}`,
+                      background:pc.bg, color:pc.color, fontWeight:700, fontSize:13,
+                      cursor:'pointer', fontFamily:"'Inter',sans-serif",
+                    }}>{i+1}</button>
+                  );
+                })}
+              </div>
+
+              <div style={{ display:'flex', flexWrap:'wrap', gap:12, marginBottom:14 }}>
+                {[['#16A34A','Answered'],['#2563EB','Current'],['#D97706','Bookmarked'],['#94A3B8','Not Done']].map(([c,l])=>(
+                  <div key={l} style={{ display:'flex', alignItems:'center', gap:6, fontSize:11, color:'rgba(255,255,255,0.6)' }}>
+                    <div style={{ width:10, height:10, borderRadius:3, background:c }}/>{l}
+                  </div>
+                ))}
+              </div>
+
+              <div style={{ textAlign:'center', fontSize:12.5, color:'rgba(255,255,255,0.6)', marginBottom:14 }}>
+                Answered: <strong style={{ color:'#86EFAC' }}>{answeredCount}</strong> · Remaining: <strong style={{ color:'#FCA5A5' }}>{remainingCount}</strong> · Bookmarked: <strong style={{ color:'#FCD34D' }}>{bookmarkedCount}</strong>
+              </div>
+
+              <button onClick={() => { setShowNav(false); setShowSubmitConfirm(true); }} style={{
+                width:'100%', padding:'12px 0', borderRadius:12, border:'1.5px solid #DC2626', background:'transparent',
+                color:'#FCA5A5', fontWeight:700, fontSize:13.5, cursor:'pointer', fontFamily:"'Inter',sans-serif",
+              }}>Submit Exam Now</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── STUDY TOOLS BOTTOM SHEET (secondary/less-used) ── */}
+      {showTools && (
+        <div style={{ position:'fixed', inset:0, zIndex:50, display:'flex', alignItems:'flex-end' }}>
+          <div onClick={() => setShowTools(false)} style={{ position:'absolute', inset:0, background:'rgba(0,0,0,0.55)' }}/>
+          <div style={{ position:'relative', width:'100%', background:'#1E293B', borderRadius:'20px 20px 0 0', padding:'14px 18px calc(18px + env(safe-area-inset-bottom))' }}>
+            <div style={{ width:36, height:4, background:'rgba(255,255,255,0.2)', borderRadius:2, margin:'0 auto 14px' }}/>
+            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:14 }}>
+              <span style={{ color:'#fff', fontWeight:800, fontSize:15 }}>More Tools</span>
+              <button onClick={() => setShowTools(false)} style={{ background:'none', border:'none', color:'rgba(255,255,255,0.6)', fontSize:20, cursor:'pointer' }}>✕</button>
+            </div>
+            <button onClick={toggleLowData} style={{
+              width:'100%', display:'flex', alignItems:'center', justifyContent:'space-between', padding:'14px 16px',
+              borderRadius:12, border:'1px solid rgba(255,255,255,0.1)', background:'rgba(255,255,255,0.04)',
+              color:'#E2E8F0', fontWeight:600, fontSize:14, cursor:'pointer', marginBottom:10, fontFamily:"'Inter',sans-serif",
+            }}>
+              <span>{lowData ? '🐢 Low Data Mode' : '📶 Full Data Mode'}</span>
+              <span style={{ fontSize:12, color:'rgba(255,255,255,0.5)' }}>{lowData ? 'Diagrams hidden' : 'Tap to save data'}</span>
+            </button>
+            <div style={{ fontSize:12, color:'rgba(255,255,255,0.45)', textAlign:'center', marginTop:4 }}>
+              Attempt {attempts}/{config.count} · {config.year !== 'All Years' ? `${config.year} · ` : ''}{config.mode.toUpperCase()}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── SUBMIT CONFIRMATION ── */}
+      {showSubmitConfirm && (
+        <div style={{ position:'fixed', inset:0, zIndex:60, display:'flex', alignItems:'center', justifyContent:'center', padding:20 }}>
+          <div onClick={() => setShowSubmitConfirm(false)} style={{ position:'absolute', inset:0, background:'rgba(0,0,0,0.65)' }}/>
+          <div style={{ position:'relative', width:'100%', maxWidth:340, background:'#1E293B', borderRadius:18, padding:24, textAlign:'center' }}>
+            <div style={{ fontSize:17, fontWeight:800, color:'#fff', marginBottom:10 }}>Submit your exam?</div>
+            <div style={{ fontSize:13.5, color:'rgba(255,255,255,0.7)', lineHeight:1.6, marginBottom:18 }}>
+              You have answered <strong style={{ color:'#86EFAC' }}>{answeredCount}</strong> of {questions.length} questions.
+              {remainingCount > 0 && <><br /><strong style={{ color:'#FCA5A5' }}>{remainingCount}</strong> question{remainingCount!==1?'s are':' is'} still unanswered.</>}
+            </div>
+            <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
+              <button onClick={() => setShowSubmitConfirm(false)} style={{
+                padding:'12px 0', borderRadius:12, border:'1.5px solid rgba(255,255,255,0.15)', background:'transparent',
+                color:'#E2E8F0', fontWeight:700, fontSize:14, cursor:'pointer', fontFamily:"'Inter',sans-serif",
+              }}>Continue Reviewing</button>
+              <button onClick={() => { setShowSubmitConfirm(false); handleSubmit(false); }} style={{
+                padding:'12px 0', borderRadius:12, border:'none', background:'#DC2626',
+                color:'#fff', fontWeight:800, fontSize:14, cursor:'pointer', fontFamily:"'Inter',sans-serif",
+              }}>Submit Exam</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showCalc && <SimpleCalc onClose={() => setShowCalc(false)} />}
+      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+    </div>
+  );
+}
+
+const toolChipStyle = {
+  display:'flex', alignItems:'center', gap:5, padding:'7px 13px', borderRadius:20,
+  border:'1px solid rgba(255,255,255,0.1)', background:'rgba(255,255,255,0.05)',
+  color:'rgba(255,255,255,0.8)', fontSize:12, fontWeight:600, cursor:'pointer',
+  whiteSpace:'nowrap', flexShrink:0, fontFamily:"'Inter',sans-serif",
+};
 
 // ── RESULTS ───────────────────────────────────────────────────
 function ResultsScreen({ result, config, onRetry, onNew }) {
@@ -777,7 +1387,7 @@ function ResultsScreen({ result, config, onRetry, onNew }) {
                     <span style={{ fontSize:11, fontWeight:700, padding:'2px 10px', borderRadius:20, background:isOk?'#DCFCE7':userAns?'#FEE2E2':'#F1F5F9', color:isOk?'#16A34A':userAns?'#DC2626':'#64748B' }}>{isOk?'✓ Correct':userAns?'✗ Wrong':'— Skipped'}</span>
                     <span style={{ fontSize:11, color:'#94A3B8' }}>Q{i+1}</span>
                   </div>
-                  <div style={{ fontSize:14, fontWeight:600, color:'#1E293B', marginBottom:10, lineHeight:1.6 }}>{q.question_text}</div>
+                  <div style={{ fontSize:14, fontWeight:600, color:'#1E293B', marginBottom:10, lineHeight:1.6 }}><MathText text={q.question_text} /></div>
                   <div style={{ display:'flex', flexDirection:'column', gap:5 }}>
                     {opts.map((opt,oi)=>{
                       const isCrt = correct.includes(opt.toLowerCase().trim());
@@ -785,18 +1395,16 @@ function ResultsScreen({ result, config, onRetry, onNew }) {
                       return (
                         <div key={oi} style={{ display:'flex', alignItems:'center', gap:8, padding:'7px 12px', borderRadius:8, fontSize:13, background:isCrt?'#F0FDF4':isUsr&&!isCrt?'#FEF2F2':'transparent' }}>
                           <span style={{ fontWeight:800, fontSize:11, color:'#94A3B8', minWidth:14 }}>{LETTERS[oi]}</span>
-                          <span style={{ color:isCrt?'#16A34A':isUsr&&!isCrt?'#DC2626':'#374151' }}>{opt}</span>
+                          <span style={{ color:isCrt?'#16A34A':isUsr&&!isCrt?'#DC2626':'#374151' }}><MathText text={opt} inline /></span>
                           {isCrt&&<span style={{ marginLeft:'auto' }}>✓</span>}
                           {isUsr&&!isCrt&&<span style={{ marginLeft:'auto' }}>✗</span>}
                         </div>
                       );
                     })}
                   </div>
-                  {q.explanation&&(
-                    <div style={{ marginTop:10, padding:'10px 14px', background:'#EFF6FF', borderRadius:8, fontSize:12, color:'#1E40AF', lineHeight:1.7 }}>
-                      <b>💡 Explanation:</b> {q.explanation}
-                    </div>
-                  )}
+                  <div style={{ marginTop:10 }}>
+                    <ExplanationBox question={q} theme="light" style={{ padding: '10px 14px', fontSize: 12 }} />
+                  </div>
                 </div>
               );
             })}

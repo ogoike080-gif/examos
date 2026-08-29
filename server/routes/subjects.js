@@ -1,12 +1,21 @@
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const { getDB } = require('../models/db');
-const { authenticate, authorize } = require('../middleware/auth');
+const { authenticate, optionalAuthenticate, authorize } = require('../middleware/auth');
 
 const router = express.Router();
 
-// GET /api/subjects
-router.get('/', authenticate, async (req, res) => {
+// GET /api/subjects — deliberately optionalAuthenticate, not authenticate.
+// The practice/study setup screens (StudyApp.jsx, PracticeMode.jsx) need
+// this list to populate the Subject field BEFORE a visitor logs in at all
+// (the anonymous "Practice Free" entry point) — this used to force a login
+// just to see subject names, which is why custom subjects an admin adds
+// here (e.g. "GS COURSE 101", "MATHS101" for a university's own courses)
+// never showed up as selectable on those setup screens: the request that
+// would have fetched them 401'd before the page ever got the real list, and
+// silently fell back to a separate hardcoded subject list baked into the
+// client instead. Nothing here is sensitive — it's just subject names.
+router.get('/', optionalAuthenticate, async (req, res) => {
   try {
     const db = getDB();
     const [subjects] = await db.execute(

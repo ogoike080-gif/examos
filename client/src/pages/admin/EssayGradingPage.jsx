@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import toast from 'react-hot-toast';
+import MathText from '../../components/MathText';
 
 const API = '/api';
 
@@ -123,7 +124,7 @@ function EssayItem({ sessionId, item, onGraded }) {
 
   return (
     <div style={{ padding: '14px 0', borderBottom: '1px solid var(--border)' }}>
-      <div style={{ fontSize: 13.5, fontWeight: 600, marginBottom: 8 }}>{item.question_text}</div>
+      <div style={{ fontSize: 13.5, fontWeight: 600, marginBottom: 8 }}><MathText text={item.question_text} inline /></div>
       <div style={{ fontSize: 13, background: 'var(--bg-raised)', borderRadius: 'var(--r)', padding: '10px 12px', marginBottom: 10, whiteSpace: 'pre-wrap' }}>
         {item.candidate_answer || <em style={{ color: 'var(--text-muted)' }}>No answer submitted</em>}
       </div>

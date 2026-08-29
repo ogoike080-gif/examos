@@ -5,6 +5,8 @@ import { ThemeToggle } from '../../components/ThemeProvider';
 import { examAPI, settingsAPI } from '../../utils/api';
 import Calculator from './Calculator';
 import AIAssistant, { AIButton } from './AIAssistant';
+import MathText from '../../components/MathText';
+import ExplanationBox from '../../components/ExplanationBox';
 
 // ── CANDIDATE LAYOUT ─────────────────────────────────────────
 export function CandidateLayout() {
@@ -16,6 +18,7 @@ export function CandidateLayout() {
 
   const tabs = [
     { path:'/exam',         label:'Exams',    icon:'📝' },
+    { path:'/exam/prep',    label:'Study',    icon:'🎓' },
     { path:'/exam/results', label:'Results',  icon:'📊' },
     { path:'/exam/insights',label:'Insights', icon:'🔍' },
     { path:'/exam/billing', label:'Upgrade',  icon:'💎' },
@@ -409,7 +412,7 @@ export function ReviewPage() {
             borderRadius:'var(--r-xl)', padding:'16px 18px',
           }}>
             <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:10 }}>
-              <div style={{ fontSize:13.5, fontWeight:600, flex:1 }}>Q{item.number}. {item.question_text}</div>
+              <div style={{ fontSize:13.5, fontWeight:600, flex:1 }}>Q{item.number}. <MathText text={item.question_text} inline /></div>
               {item.is_correct !== null && (
                 <span style={{ flexShrink:0, marginLeft:10, fontSize:11, fontWeight:800, padding:'3px 9px', borderRadius:'var(--r-full)', color:'#fff', background:item.is_correct?'var(--success)':'var(--danger)' }}>
                   {item.is_correct ? '✓ Correct' : '✗ Wrong'}
@@ -430,7 +433,7 @@ export function ReviewPage() {
                       color: isCorrectOpt || isCandidate ? 'var(--text-primary)' : 'var(--text-secondary)',
                       fontWeight: isCorrectOpt || isCandidate ? 700 : 400,
                     }}>
-                      {String.fromCharCode(65+i)}) {opt} {isCorrectOpt && ' ✓'} {isCandidate && !isCorrectOpt && ' (your answer)'}
+                      {String.fromCharCode(65+i)}) <MathText text={opt} inline /> {isCorrectOpt && ' ✓'} {isCandidate && !isCorrectOpt && ' (your answer)'}
                     </div>
                   );
                 })}
@@ -443,14 +446,8 @@ export function ReviewPage() {
               </div>
             )}
 
-            {item.explanation ? (
-              <div style={{ fontSize:12.5, background:'var(--brand-dim)', borderRadius:'var(--r)', padding:'10px 12px', color:'var(--text-secondary)' }}>
-                <strong style={{ color:'var(--text-primary)' }}>💡 Explanation: </strong>{item.explanation}
-              </div>
-            ) : (
-              item.is_correct === false && (
-                <div style={{ fontSize:12, color:'var(--text-muted)', fontStyle:'italic' }}>No explanation available for this question yet.</div>
-              )
+            {item.explanation !== undefined && (
+              <ExplanationBox question={item} theme="light" style={{ fontSize: 12.5, padding: '10px 12px' }} />
             )}
           </div>
         ))}

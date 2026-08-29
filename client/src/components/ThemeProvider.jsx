@@ -1,12 +1,12 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 
-const ThemeContext = createContext({ theme: 'dark', toggle: () => {} });
+const ThemeContext = createContext({ theme: 'light', toggle: () => {} });
 
 export function ThemeProvider({ children }) {
   const [theme, setTheme] = useState(() => {
     try {
-      return localStorage.getItem('examos-theme') || 'dark';
-    } catch { return 'dark'; }
+      return localStorage.getItem('examos-theme') || 'light';
+    } catch { return 'light'; }
   });
 
   useEffect(() => {

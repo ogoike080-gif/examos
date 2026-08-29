@@ -4,6 +4,7 @@ import toast from 'react-hot-toast';
 import { examAPI, proctorAPI } from '../../utils/api';
 import { useAuthStore, useExamStore, useSocketStore } from '../../store';
 import Calculator from './Calculator';
+import MathText from '../../components/MathText';
 
 const LETTERS = ['A','B','C','D','E'];
 
@@ -320,7 +321,7 @@ export default function ExamBrowserPage() {
             fontSize:16, lineHeight:1.75, fontWeight:500,
             color:'var(--text-primary)',
           }}>
-            {q.question_text}
+            <MathText text={q.question_text} />
             {q.media_url && (
               <img
                 src={q.media_url}
@@ -366,7 +367,7 @@ export default function ExamBrowserPage() {
                       color: selected ? '#fff' : 'var(--text-muted)',
                       transition:'all var(--t-fast)',
                     }}>{LETTERS[i]}</div>
-                    <span style={{ fontSize:14, fontWeight: selected ? 600 : 400, color: selected ? 'var(--brand-light)' : 'var(--text-primary)', lineHeight:1.5 }}>{opt}</span>
+                    <span style={{ fontSize:14, fontWeight: selected ? 600 : 400, color: selected ? 'var(--brand-light)' : 'var(--text-primary)', lineHeight:1.5 }}><MathText text={opt} inline /></span>
                     {selected && <span style={{ marginLeft:'auto', fontSize:16 }}>✓</span>}
                   </button>
                 );

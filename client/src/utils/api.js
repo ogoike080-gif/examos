@@ -16,6 +16,8 @@ export const examAPI = {
   get: (id) => axios.get(`${API}/exams/${id}`),
   create: (data) => axios.post(`${API}/exams`, data),
   update: (id, data) => axios.put(`${API}/exams/${id}`, data),
+  delete: (id, force) => axios.delete(`${API}/exams/${id}`, { params: force ? { force: true } : {} }),
+  deleteByYear: (year, force) => axios.delete(`${API}/exams/by-year/${year}`, { params: force ? { force: true } : {} }),
   startSession: (id, deviceFingerprint) =>
     axios.post(`${API}/exams/${id}/start-session`, { device_fingerprint: deviceFingerprint }),
   saveAnswer: (sessionId, questionId, answer) =>
@@ -41,6 +43,8 @@ export const questionAPI = {
   delete: (id) => axios.delete(`${API}/questions/${id}`),
   bulkUpload: (questions) => axios.post(`${API}/questions/bulk`, { questions }),
   aiGenerate: (data) => axios.post(`${API}/questions/ai-generate`, data),
+  generateExplanation: (id) => axios.post(`${API}/questions/${id}/generate-explanation`),
+  backfillExplanations: (params) => axios.post(`${API}/questions/backfill-explanations`, params || {}),
   subjects: () => axios.get(`${API}/questions/subjects/list`),
   uploadImage: (file) => {
     const fd = new FormData();
@@ -49,6 +53,24 @@ export const questionAPI = {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
   },
+  // Re-processes a zip of the original source-paper photos and patches the
+  // media_url of matching live questions. force=true also re-crops rows
+  // whose image already exists (use this to fix clipped/too-tight diagrams,
+  // not just missing ones) — see routes/questions.js repair-diagrams.
+  repairDiagrams: ({ zip, examBody, year, subjectId, force }) => {
+    const fd = new FormData();
+    fd.append('zip', zip);
+    fd.append('exam_body', examBody);
+    fd.append('year', year);
+    if (subjectId) fd.append('subject_id', subjectId);
+    if (force) fd.append('force', 'true');
+    return axios.post(`${API}/questions/repair-diagrams`, fd, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  },
+  // Draw-and-save crop for one stubborn question — see manual-crop in
+  // routes/questions.js. Box is percentages of the current image (0-100).
+  manualCrop: (id, box) => axios.post(`${API}/questions/${id}/manual-crop`, { box }),
 };
 
 // ── PROCTOR ───────────────────────────────────────────────────
@@ -129,6 +151,113 @@ export const importAPI = {
   sourcePapersZipURL: (exam_body, year) => `${API}/import/source-papers/zip?exam_body=${encodeURIComponent(exam_body)}&year=${encodeURIComponent(year)}`,
   deleteSourcePaper: (id) => axios.delete(`${API}/import/source-papers/${id}`),
   templateURL: () => `${API}/import/template`,
+};
+
+// ── IMPORT BATCHES (Milestone 3/4 staged pipeline) ──────────────
+// Parallel to importAPI above — writes to staging tables and requires
+// explicit review + publish before questions go live. See ImportBatchesPage
+// and ImportBatchReviewPage.
+export const importBatchAPI = {
+  uploadZip: (file, { exam_body, year, subject_id, paper_type, expected_count }) => {
+    const fd = new FormData();
+    fd.append('zip', file);
+    if (exam_body) fd.append('exam_body', exam_body);
+    if (year) fd.append('year', year);
+    if (subject_id) fd.append('subject_id', subject_id);
+    if (paper_type) fd.append('paper_type', paper_type);
+    if (expected_count) fd.append('expected_count', expected_count);
+    return axios.post(`${API}/import/batches/zip`, fd, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 600000, // multi-pass pipeline (incl. Pass 5 re-verification) can take longer than the old flow
+    });
+  },
+  list: () => axios.get(`${API}/import/batches`),
+  get: (id) => axios.get(`${API}/import/batches/${id}`),
+  staged: (id, status) => axios.get(`${API}/import/batches/${id}/staged`, { params: status ? { status } : {} }),
+  updateStaged: (id, stagedId, data) => axios.put(`${API}/import/batches/${id}/staged/${stagedId}`, data),
+  quickVerify: (id, stagedId) => axios.post(`${API}/import/batches/${id}/staged/${stagedId}/quick-verify`, {}, { timeout: 60000 }),
+  publish: (id) => axios.post(`${API}/import/batches/${id}/publish`),
+  cancel: (id) => axios.delete(`${API}/import/batches/${id}`),
+  pages: (id) => axios.get(`${API}/import/batches/${id}/pages`),
+  retryPage: (id, pageId) => axios.post(`${API}/import/batches/${id}/pages/${pageId}/retry`, {}, { timeout: 120000 }),
+  fillMissing: (id, number, data) => axios.post(`${API}/import/batches/${id}/missing/${number}`, data),
+  aiSolveMissing: (id) => axios.post(`${API}/import/batches/${id}/ai-solve-missing`, {}, { timeout: 300000 }),
+  reconstructDiagram: (id, stagedId) => axios.post(`${API}/import/batches/${id}/staged/${stagedId}/reconstruct-diagram`, {}, { timeout: 120000 }),
+  qualityCheck: (id, stagedId) => axios.post(`${API}/import/batches/${id}/staged/${stagedId}/quality-check`, {}, { timeout: 60000 }),
+};
+
+// ── Diagram repair for already-published questions whose media_url points
+// to a file lost before a persistent volume was attached (see questions.js)
+export const diagramRepairAPI = {
+  repair: (file, { exam_body, year, subject_id }) => {
+    const fd = new FormData();
+    fd.append('zip', file);
+    fd.append('exam_body', exam_body);
+    fd.append('year', year);
+    if (subject_id) fd.append('subject_id', subject_id);
+    return axios.post(`${API}/questions/repair-diagrams`, fd, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 600000,
+    });
+  },
+};
+
+// ── EXAM PREPARATION SYLLABUS (Exam Body Manager) ────────────────
+export const syllabusAPI = {
+  examBodies: () => axios.get(`${API}/syllabus/exam-bodies`),
+  createExamBody: (data) => axios.post(`${API}/syllabus/exam-bodies`, data),
+  updateExamBody: (id, data) => axios.put(`${API}/syllabus/exam-bodies/${id}`, data),
+  deleteExamBody: (id) => axios.delete(`${API}/syllabus/exam-bodies/${id}`),
+
+  examinations: (examBodyId) => axios.get(`${API}/syllabus/exam-bodies/${examBodyId}/examinations`),
+  createExamination: (examBodyId, data) => axios.post(`${API}/syllabus/exam-bodies/${examBodyId}/examinations`, data),
+  updateExamination: (id, data) => axios.put(`${API}/syllabus/examinations/${id}`, data),
+  deleteExamination: (id) => axios.delete(`${API}/syllabus/examinations/${id}`),
+
+  subjects: (examinationId) => axios.get(`${API}/syllabus/examinations/${examinationId}/subjects`),
+  createSubject: (examinationId, data) => axios.post(`${API}/syllabus/examinations/${examinationId}/subjects`, data),
+  updateSubject: (id, data) => axios.put(`${API}/syllabus/subjects/${id}`, data),
+  deleteSubject: (id) => axios.delete(`${API}/syllabus/subjects/${id}`),
+
+  topics: (subjectId) => axios.get(`${API}/syllabus/subjects/${subjectId}/topics`),
+  createTopic: (subjectId, data) => axios.post(`${API}/syllabus/subjects/${subjectId}/topics`, data),
+  updateTopic: (id, data) => axios.put(`${API}/syllabus/topics/${id}`, data),
+  deleteTopic: (id) => axios.delete(`${API}/syllabus/topics/${id}`),
+  getTopic: (id) => axios.get(`${API}/syllabus/topics/${id}`),
+
+  createSubtopic: (topicId, data) => axios.post(`${API}/syllabus/topics/${topicId}/subtopics`, data),
+  deleteSubtopic: (id) => axios.delete(`${API}/syllabus/subtopics/${id}`),
+
+  getContent: (topicId) => axios.get(`${API}/syllabus/topics/${topicId}/content`),
+  generateContent: (topicId) => axios.post(`${API}/syllabus/topics/${topicId}/content/generate`, {}, { timeout: 60000 }),
+  saveContent: (topicId, data) => axios.put(`${API}/syllabus/topics/${topicId}/content`, data),
+
+  // Student-facing
+  getPublishedContent: (topicId) => axios.get(`${API}/syllabus/topics/${topicId}/published-content`),
+  subjectProgress: (subjectId) => axios.get(`${API}/syllabus/progress/subject/${subjectId}`),
+  topicProgress: (topicId) => axios.get(`${API}/syllabus/progress/topic/${topicId}`),
+  startTopic: (topicId) => axios.post(`${API}/syllabus/progress/topic/${topicId}/start`),
+  completeTopic: (topicId) => axios.post(`${API}/syllabus/progress/topic/${topicId}/complete`),
+  continueLearning: () => axios.get(`${API}/syllabus/continue-learning`),
+};
+
+// ── TEXTBOOK LIBRARY ──────────────────────────────────────────
+export const textbookAPI = {
+  upload: (file, meta) => {
+    const fd = new FormData();
+    fd.append('file', file);
+    Object.entries(meta).forEach(([k, v]) => { if (v) fd.append(k, v); });
+    return axios.post(`${API}/textbooks`, fd, { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 120000 });
+  },
+  list: (syllabusSubjectId) => axios.get(`${API}/textbooks`, { params: syllabusSubjectId ? { syllabus_subject_id: syllabusSubjectId } : {} }),
+  get: (id) => axios.get(`${API}/textbooks/${id}`),
+  delete: (id) => axios.delete(`${API}/textbooks/${id}`),
+  addChapter: (textbookId, data) => axios.post(`${API}/textbooks/${textbookId}/chapters`, data),
+  updateChapter: (chapterId, data) => axios.put(`${API}/textbooks/chapters/${chapterId}`, data),
+  deleteChapter: (chapterId) => axios.delete(`${API}/textbooks/chapters/${chapterId}`),
+  setChapterTopics: (chapterId, topicIds) => axios.put(`${API}/textbooks/chapters/${chapterId}/topics`, { topic_ids: topicIds }),
+  // Student-facing
+  recommendedReading: (topicId) => axios.get(`${API}/textbooks/topic/${topicId}/reading`),
 };
 
 // ── SETTINGS ──────────────────────────────────────────────────
