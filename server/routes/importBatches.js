@@ -28,7 +28,6 @@ const { getDB } = require('../models/db');
 const { authenticate, authorize } = require('../middleware/auth');
 const { extractQuestionsFromImage, reverifyLowConfidenceQuestion, solveObjectiveQuestion, reconstructDiagramSVG, qualityCheckDiagram, parseGeminiError } = require('../ai/questionGenerator');
 const { computeConfidence } = require('../services/confidenceScoring');
-const { hasRealOptionContent } = require('../utils/answerQuality');
 
 const router = express.Router();
 
@@ -54,9 +53,7 @@ async function cropDiagram(buffer, box) {
     const meta = await img.metadata();
     if (!meta.width || !meta.height) return null;
 
-    // 8pt margin, not 3 — see routes/import.js for why. Cropping too tight
-    // is unrecoverable; a little extra whitespace around the figure is not.
-    const pad = 8;
+    const pad = 3;
     const xMin = Math.max(0, box.x_min - pad);
     const yMin = Math.max(0, box.y_min - pad);
     const xMax = Math.min(100, box.x_max + pad);
@@ -65,70 +62,16 @@ async function cropDiagram(buffer, box) {
 
     const left = Math.round((xMin / 100) * meta.width);
     const top = Math.round((yMin / 100) * meta.height);
-    // Clamp so rounding never pushes the extract box past the image bounds.
-    const width = Math.min(Math.round(((xMax - xMin) / 100) * meta.width), meta.width - left);
-    const height = Math.min(Math.round(((yMax - yMin) / 100) * meta.height), meta.height - top);
+    const width = Math.round(((xMax - xMin) / 100) * meta.width);
+    const height = Math.round(((yMax - yMin) / 100) * meta.height);
     if (width < 20 || height < 20) return null;
 
     fs.mkdirSync(DIAGRAMS_DIR, { recursive: true });
     const filename = `${uuidv4()}.jpg`;
-    // A raw extract() straight from a phone photo of a printed page looks
-    // exactly like what it is — dull/grayish "paper" background instead of
-    // clean white, soft/blurry edges, whatever tilt was in the original
-    // shot. None of that is fixable by cropping tighter; it needs actual
-    // image cleanup. This is deliberately cheap, deterministic, sharp-only
-    // processing (no AI call, no added cost/quota) applied to every single
-    // diagram crop by default — the opt-in AI "Reconstruct Diagram" tool
-    // (reconstructDiagramSVG, used from the review screen) is still there
-    // for cases that need a full vector redraw, but most diagrams just need
-    // this to stop looking like a screenshot of a photograph:
-    //   - rotate(): reads embedded EXIF orientation so a sideways phone
-    //     photo doesn't end up as a sideways diagram
-    //   - normalize(): stretches the tonal range so the page's off-white/
-    //     gray scan background actually reads as white, and lines that were
-    //     faint from bad lighting get real contrast
-    //   - trim(): the 8pt safety pad above is deliberately generous — better
-    //     to keep a little extra border than risk slicing off part of the
-    //     diagram. But that same safety margin is exactly what makes a crop
-    //     look like "an excerpt cut out of a bigger page" instead of a
-    //     clean, standalone image — extra plain background around the
-    //     actual figure is the single biggest visual tell that something
-    //     was copied from a photo. trim() shaves off any uniform border down
-    //     to the real content, tightening the crop regardless of how much
-    //     of that safety padding was actually needed for this particular
-    //     diagram. Wrapped in its own try/catch below — a mostly-blank
-    //     diagram (a sparse graph on lots of empty grid) can occasionally
-    //     make trim's background-detection misfire or over-trim, and losing
-    //     the whole diagram because of that is worse than shipping one
-    //     that's merely less tightly cropped than ideal.
-    //   - sharpen(): counters the soft, slightly-out-of-focus look that
-    //     phone-camera JPEG compression leaves on fine diagram lines/labels
-    //   - gamma(): lifts shadow detail a touch without blowing out
-    //     highlights, so shaded regions in the diagram stay legible
-    const basePipeline = () => sharp(buffer)
+    await sharp(buffer)
       .extract({ left, top, width, height })
-      .rotate()
-      .normalize();
-
-    try {
-      // threshold intentionally higher than sharp's default (10) — a
-      // phone-photo background is never perfectly flat even after
-      // normalizing, and a too-low threshold would stop trimming at the
-      // first faint shadow instead of the actual diagram edge.
-      await basePipeline()
-        .trim({ threshold: 25 })
-        .gamma(1.05)
-        .sharpen({ sigma: 0.6 })
-        .jpeg({ quality: 92, mozjpeg: true })
-        .toFile(path.join(DIAGRAMS_DIR, filename));
-    } catch (trimErr) {
-      console.error('diagram trim failed, falling back to untrimmed crop:', trimErr.message);
-      await basePipeline()
-        .gamma(1.05)
-        .sharpen({ sigma: 0.6 })
-        .jpeg({ quality: 92, mozjpeg: true })
-        .toFile(path.join(DIAGRAMS_DIR, filename));
-    }
+      .jpeg({ quality: 88 })
+      .toFile(path.join(DIAGRAMS_DIR, filename));
 
     return `/uploads/diagrams/${filename}`;
   } catch (err) {
@@ -324,17 +267,7 @@ router.post('/zip', authenticate, authorize('superadmin', 'admin', 'examiner'), 
           confidence: q.confidence || 'medium',
           source_photo: q.source_photo,
           source_number: q.number ?? null,
-          // Was: falls back to the ENTIRE raw source page photo when
-          // cropDiagram() fails — meaning a student could end up seeing the
-          // whole scanned exam page: unrelated questions, other students'
-          // handwritten marks, everything, dumped in as "the diagram" for
-          // one specific question. That's worse than showing nothing.
-          // diagram_crop_failed already exists specifically to flag this
-          // case for the "Repair Broken Diagrams" admin tool — showing null
-          // here (no image) is what actually leans on that flag correctly,
-          // instead of quietly papering over the failure with an
-          // inappropriate fallback image.
-          media_url: q.has_diagram ? (q.diagram_url || null) : null,
+          media_url: q.diagram_url || null, // crop failed -> no image, never the whole irrelevant source page
           diagram_crop_failed: !!q.diagram_crop_failed,
           answer_from_key_page: false,
           answer_confirmed_twice: false,
@@ -959,23 +892,7 @@ router.post('/:id/publish', authenticate, authorize('superadmin', 'admin'), asyn
     }
 
     let published = 0;
-    let heldForReview = 0;
     for (const s of staged) {
-      // Even a "verified" staged row can still have this specific shape of
-      // bad data slip through if a human reviewer eyeballed the question
-      // text/diagram and approved it without noticing the options were
-      // never real content ("A"/"B"/"C"/"D" placeholders — see
-      // utils/answerQuality.js). Catch it here, at the last point before it
-      // becomes visible to students, rather than relying on review alone.
-      if (s.question_type !== 'essay' && !hasRealOptionContent(s.options)) {
-        await db.execute(
-          `UPDATE staged_questions SET review_status='needs_review', review_notes=? WHERE id=?`,
-          ['Options were not properly extracted (placeholder letters only) — fix the option text before publishing', s.id]
-        );
-        heldForReview++;
-        continue;
-      }
-
       const questionId = uuidv4();
       const tags = [batch.exam_body, String(batch.year)].filter(Boolean);
       await db.execute(
@@ -1004,12 +921,7 @@ router.post('/:id/publish', authenticate, authorize('superadmin', 'admin'), asyn
       await db.execute(`UPDATE import_batches SET status='published' WHERE id=?`, [req.params.id]);
     }
 
-    res.json({
-      message: heldForReview
-        ? `Published ${published} question(s) — ${heldForReview} sent back to review (options weren't properly extracted)`
-        : `Published ${published} question(s) to the live question bank`,
-      published, held_for_review: heldForReview, remaining_in_review: remaining,
-    });
+    res.json({ message: `Published ${published} question(s) to the live question bank`, published, remaining_in_review: remaining });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
