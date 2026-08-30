@@ -45,6 +45,7 @@ export const questionAPI = {
   aiGenerate: (data) => axios.post(`${API}/questions/ai-generate`, data),
   generateExplanation: (id) => axios.post(`${API}/questions/${id}/generate-explanation`),
   backfillExplanations: (params) => axios.post(`${API}/questions/backfill-explanations`, params || {}),
+  backfillCorrectAnswers: (params) => axios.post(`${API}/questions/backfill-correct-answers`, params || {}),
   subjects: () => axios.get(`${API}/questions/subjects/list`),
   uploadImage: (file) => {
     const fd = new FormData();
@@ -68,9 +69,11 @@ export const questionAPI = {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
   },
-  // Draw-and-save crop for one stubborn question — see manual-crop in
-  // routes/questions.js. Box is percentages of the current image (0-100).
-  manualCrop: (id, box) => axios.post(`${API}/questions/${id}/manual-crop`, { box }),
+  // Live, published questions whose answer options are all bare-letter
+  // placeholders ("A"/"B"/"C"/"D") — never real content, usually a
+  // diagram-based option the import pipeline couldn't transcribe. See
+  // hasRealOptionContent in utils/answerQuality.js.
+  flaggedBadOptions: () => axios.get(`${API}/questions/flagged/bad-options`),
 };
 
 // ── PROCTOR ───────────────────────────────────────────────────

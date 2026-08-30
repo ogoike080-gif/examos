@@ -33,7 +33,12 @@ async function cropDiagram(buffer, box) {
     const meta = await img.metadata();
     if (!meta.width || !meta.height) return null;
 
-    const pad = 3; // percentage points of margin so the crop isn't razor-tight
+    // 8 percentage points of margin, not 3 — the AI's own box estimate is
+    // frequently a little tight around graphs/tables (axis labels, tick
+    // marks, and table borders sit right at the edge), and a diagram that's
+    // clipped is unrecoverable, whereas a bit of extra whitespace or
+    // neighbouring text around it is harmless. Bias generous.
+    const pad = 8;
     const xMin = Math.max(0, box.x_min - pad);
     const yMin = Math.max(0, box.y_min - pad);
     const xMax = Math.min(100, box.x_max + pad);
@@ -42,8 +47,11 @@ async function cropDiagram(buffer, box) {
 
     const left = Math.round((xMin / 100) * meta.width);
     const top = Math.round((yMin / 100) * meta.height);
-    const width = Math.round(((xMax - xMin) / 100) * meta.width);
-    const height = Math.round(((yMax - yMin) / 100) * meta.height);
+    // Clamp width/height so rounding never pushes the extract box past the
+    // actual image bounds (sharp throws on an out-of-bounds extract, which
+    // silently killed the crop and fell back to the whole page).
+    const width = Math.min(Math.round(((xMax - xMin) / 100) * meta.width), meta.width - left);
+    const height = Math.min(Math.round(((yMax - yMin) / 100) * meta.height), meta.height - top);
     if (width < 20 || height < 20) return null; // suspiciously tiny — box was probably bad
 
     fs.mkdirSync(DIAGRAMS_DIR, { recursive: true });
@@ -299,7 +307,7 @@ router.post('/zip-extract', authenticate, authorize('superadmin', 'admin', 'exam
         confidence: q.confidence || 'medium',
         source_photo: q.source_photo,
         source_number: q.number ?? null,
-        media_url: q.diagram_url || null, // crop failed -> no image, never the whole irrelevant source page
+        media_url: q.has_diagram ? (q.diagram_url || photoImageUrls[q.source_photo] || null) : null,
       };
       const pool = merged.question_type === 'essay' ? theoryPool : objectivePool;
       if (q.number !== undefined && q.number !== null && !pool.has(q.number)) {

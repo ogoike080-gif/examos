@@ -549,6 +549,56 @@ Rules:
 }
 
 /**
+ * Locates and boxes JUST one specific question's diagram on its original
+ * source page — used by services/autoDiagramCropper.js to fix a question
+ * that's live but missing its diagram image (or whose crop clearly failed),
+ * without re-extracting every other question on the page from scratch. This
+ * is the single-question sibling of the has_diagram/diagram_box fields
+ * extractQuestionsFromImage produces for a whole page at once.
+ */
+async function locateQuestionDiagram({ imageBase64, mediaType, question_number, question_text }) {
+  const prompt = `This is a scanned exam paper page. Find ONE specific question on it and report whether it has an accompanying figure/diagram/graph/table, and if so, exactly where that figure sits on the page.
+
+The question to find:
+${question_number != null ? `Question number ${question_number}` : '(unnumbered — use the text below to locate it)'}
+Question text: "${question_text}"
+
+Respond in JSON only (no markdown, no backticks):
+{
+  "found_on_page": true|false,
+  "has_diagram": true|false,
+  "diagram_box": {"x_min": 0, "y_min": 0, "x_max": 0, "y_max": 0} or null
+}
+
+Rules:
+- diagram_box is given as percentages of the full image's width and height (0 = left/top edge, 100 = right/bottom edge), a bounding box around just that one figure — not the surrounding question text, and not any other question's figure on the same page.
+- Bias generous, not tight: include every axis label, tick mark, legend, unit label, and table border inside the box, plus a visible margin of empty space on all four sides. A box that includes a bit of surrounding whitespace or nearby text is fine; a box that clips any part of the figure itself is not.
+- If you can't find this question on the page at all, set found_on_page: false and has_diagram: false.
+- If you find the question but it has no figure of its own (a pure text/computation question), set has_diagram: false and diagram_box: null.`;
+
+  try {
+    const response = await ai.models.generateContent({
+      model: VISION_MODEL,
+      contents: [
+        {
+          role: 'user',
+          parts: [
+            { inlineData: { mimeType: mediaType, data: imageBase64 } },
+            { text: prompt },
+          ],
+        },
+      ],
+    });
+    return extractJSON(response.text);
+  } catch (err) {
+    const geminiErr = parseGeminiError(err);
+    if (geminiErr.isQuotaExceeded) throw Object.assign(new Error(geminiErr.message), { isQuotaExceeded: true, retryDelaySeconds: geminiErr.retryDelaySeconds });
+    console.error('locateQuestionDiagram failed:', err.message);
+    return { found_on_page: null, has_diagram: false, diagram_box: null, error: err.message };
+  }
+}
+
+/**
  * Drafts exam-prep learning content for one syllabus topic — the "Read Topic"
  * material from the exam-preparation spec. Always returns a DRAFT; the
  * calling route is responsible for keeping it unpublished until an admin
@@ -909,6 +959,7 @@ module.exports = {
   analyzeSessionBehavior,
   extractQuestionsFromImage,
   reverifyLowConfidenceQuestion,
+  locateQuestionDiagram,
   generateTopicContent,
   solveObjectiveQuestion,
   explainAnswer,

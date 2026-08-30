@@ -28,6 +28,7 @@ const aiRoutes        = require('./routes/ai');
 const parentRoutes    = require('./routes/parent');
 const { initSocket } = require('./socket/socketManager');
 const { startAutoAnswerSolver } = require('./services/autoAnswerSolver');
+const { startAutoDiagramCropper } = require('./services/autoDiagramCropper');
 
 const app = express();
 const server = http.createServer(app);
@@ -255,6 +256,14 @@ async function start() {
     // admin who wants a specific batch done right now, but this covers the
     // rest of the bank on its own over time.
     startAutoAnswerSolver();
+
+    // Same idea, for diagrams: continuously finds live questions missing a
+    // diagram image that plausibly need one, and crops one automatically
+    // from the archived original source page (see
+    // services/autoDiagramCropper.js). A freshly-cropped, correctly-framed
+    // diagram is also what lets the answer-solver above actually read and
+    // solve a question it previously couldn't.
+    startAutoDiagramCropper();
   } catch (err) {
     console.error('❌ Failed to start server:', err);
     process.exit(1);

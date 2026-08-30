@@ -3,7 +3,6 @@ import { useNavigate, useParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { questionAPI } from '../../utils/api';
 import Button from '../../components/shared/Button';
-import DiagramCropTool from '../../components/DiagramCropTool';
 import styles from './QuestionBuilderPage.module.css';
 
 const QUESTION_TYPES = [
@@ -44,7 +43,6 @@ export default function QuestionBuilderPage() {
   const [tagInput, setTagInput] = useState('');
   const [aiConfig, setAiConfig] = useState({ topic: '', count: 5 });
   const [imageUploading, setImageUploading] = useState(false);
-  const [cropToolOpen, setCropToolOpen] = useState(false);
 
   useEffect(() => {
     questionAPI.subjects().then(r => setSubjects(r.data.subjects));
@@ -335,14 +333,6 @@ export default function QuestionBuilderPage() {
                   style={{ position: 'absolute', top: 8, right: 8, background: 'rgba(0,0,0,0.65)', color: '#fff', border: 'none', borderRadius: 6, width: 26, height: 26, cursor: 'pointer' }}
                   title="Remove image"
                 >✕</button>
-                {id && (
-                  <button
-                    type="button"
-                    onClick={() => setCropToolOpen(true)}
-                    style={{ position: 'absolute', bottom: 8, right: 8, background: 'rgba(37,99,235,0.9)', color: '#fff', border: 'none', borderRadius: 6, padding: '5px 10px', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
-                    title="Draw a tighter crop from the current image"
-                  >✂ Fix Crop</button>
-                )}
               </div>
             ) : (
               <label
@@ -470,15 +460,6 @@ export default function QuestionBuilderPage() {
           </div>
         </div>
       </div>
-
-      {cropToolOpen && form.media_url && (
-        <DiagramCropTool
-          questionId={id}
-          imageUrl={form.media_url}
-          onClose={() => setCropToolOpen(false)}
-          onSaved={(newUrl) => set('media_url', newUrl)}
-        />
-      )}
     </div>
   );
 }

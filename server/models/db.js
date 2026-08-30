@@ -311,6 +311,29 @@ async function createSchema() {
     console.log('✅ questions.question_number column added');
   } catch (e) { /* already exists — safe to ignore */ }
 
+  // Lets the automatic diagram re-cropper (services/autoDiagramCropper.js)
+  // remember "already checked this one, no diagram needed" so it doesn't
+  // burn an AI call on the same plain-text question every single tick
+  // forever. Deliberately separate from media_url itself — a question can
+  // be checked and correctly have NO media_url (most questions have no
+  // diagram at all), so "media_url IS NULL" alone can't distinguish
+  // "never checked" from "checked, confirmed no diagram".
+  try {
+    await db.execute(`ALTER TABLE questions ADD COLUMN diagram_checked_at DATETIME NULL`);
+    console.log('✅ questions.diagram_checked_at column added');
+  } catch (e) { /* already exists — safe to ignore */ }
+
+  // Same idea for services/autoAnswerSolver.js — without this, a question
+  // that's genuinely unsolvable (or solvable only once its diagram gets
+  // fixed by autoDiagramCropper) would get re-attempted every single tick
+  // forever, burning AI quota on the same failure repeatedly. A 24h cooldown
+  // is long enough for the diagram cropper's fix to land first, short enough
+  // that a fix doesn't sit unexploited for long.
+  try {
+    await db.execute(`ALTER TABLE questions ADD COLUMN answer_solve_attempted_at DATETIME NULL`);
+    console.log('✅ questions.answer_solve_attempted_at column added');
+  } catch (e) { /* already exists — safe to ignore */ }
+
   // Composite index for the Exam Body -> Year -> Subject -> Paper Type -> Question
   // Number lookup pattern (year still lives in `tags` for now — see Milestone 3
   // note in the routes layer — so this index covers the three new columns plus

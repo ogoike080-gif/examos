@@ -14,7 +14,14 @@ const BATCH_SIZE = 5;
 const TICK_INTERVAL_MS = 3 * 60 * 1000; // every 3 minutes
 const DEFAULT_QUOTA_COOLDOWN_MS = 60 * 1000;
 
-const WHERE = "q.is_active = TRUE AND q.question_type != 'essay' AND JSON_LENGTH(q.options) >= 2 AND (q.correct_answers IS NULL OR JSON_LENGTH(q.correct_answers) = 0)";
+const WHERE = `q.is_active = TRUE AND q.question_type != 'essay' AND JSON_LENGTH(q.options) >= 2
+  AND (q.correct_answers IS NULL OR JSON_LENGTH(q.correct_answers) = 0)
+  AND (q.answer_solve_attempted_at IS NULL OR q.answer_solve_attempted_at < DATE_SUB(NOW(), INTERVAL 1 DAY))`;
+// ^ the cooldown means a question that failed today won't be retried until
+// tomorrow — long enough for autoDiagramCropper to have fixed its diagram in
+// the meantime (a fresh, correctly-framed image is often the difference
+// between "unsolvable" and solvable), short enough that the fix doesn't sit
+// unexploited for long once it lands.
 
 let quotaExhaustedUntil = 0;
 let running = false; // re-entrancy guard — a slow tick shouldn't overlap the next timer fire
@@ -39,8 +46,12 @@ async function tick() {
       else if (result.status === 'quota_exceeded') {
         quotaExhaustedUntil = Date.now() + (result.retryDelaySeconds ? result.retryDelaySeconds * 1000 : DEFAULT_QUOTA_COOLDOWN_MS);
         console.log(`🤖 Auto-solver: AI quota reached, pausing until ${new Date(quotaExhaustedUntil).toISOString()}`);
-        break; // rest of this batch would fail the same way — stop here, resume next tick after cooldown
+        break; // rest of this batch would fail the same way — stop here, resume next tick after cooldown — leave attempted_at unset so it's retried right away once quota clears, not stuck for a full day
       } else {
+        // Genuinely unsolvable (or an unexpected error) — record the
+        // attempt either way so the 24h cooldown above kicks in, rather
+        // than hammering the same failure every 3 minutes.
+        await db.execute('UPDATE questions SET answer_solve_attempted_at=NOW() WHERE id=?', [question.id]);
         unsolvable++;
       }
     }
