@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const sharp = require('sharp');
 const { getDB } = require('../models/db');
 const { locateQuestionDiagram } = require('../ai/questionGenerator');
 const { cropDiagram } = require('../utils/diagramCrop');
@@ -34,6 +35,14 @@ const BATCH_SIZE = 5;
 const TICK_INTERVAL_MS = 4 * 60 * 1000; // every 4 minutes — separate cadence from the answer-solver so the two don't both hit the AI at once
 const DEFAULT_QUOTA_COOLDOWN_MS = 60 * 1000;
 const SOURCE_PAPERS_DIR = path.join(__dirname, '..', 'uploads', 'source-papers');
+const UPLOADS_DIR = path.join(__dirname, '..', 'uploads');
+// A media_url whose image covers this much of the ORIGINAL page's area (by
+// pixel dimensions) is treated as "never really cropped" — either an older
+// import version's whole-page fallback (before that behaviour was removed —
+// see routes/import.js), or a crop whose box the AI estimated as nearly the
+// entire page. Below this the question is left alone as a legitimate,
+// already-correct crop.
+const WHOLE_PAGE_AREA_RATIO = 0.7;
 
 const keywordWhere = NEEDS_DIAGRAM_KEYWORDS.map(() => 'q.question_text LIKE ?').join(' OR ');
 const keywordParams = NEEDS_DIAGRAM_KEYWORDS.map(k => `%${k}%`);
@@ -46,19 +55,45 @@ function mediaTypeFor(filePath) {
   return ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
 }
 
+// True if the image at mediaUrl is suspiciously close in size to the
+// original source page — i.e. it looks like the whole page got stored as
+// "the diagram" rather than an actual crop of just one figure. Fails safe
+// (false) on any error, since a false positive here would re-crop an
+// already-fine diagram and a false negative just leaves a bad one for the
+// keyword+NULL pass or the manual admin tool to catch some other way.
+async function looksLikeUncroppedPage(mediaUrl, sourceBuffer) {
+  if (!mediaUrl || !mediaUrl.startsWith('/uploads/')) return false;
+  try {
+    const currentPath = path.join(UPLOADS_DIR, mediaUrl.replace(/^\/uploads\//, ''));
+    const [currentMeta, sourceMeta] = await Promise.all([
+      sharp(currentPath).metadata(),
+      sharp(sourceBuffer).metadata(),
+    ]);
+    if (!currentMeta.width || !currentMeta.height || !sourceMeta.width || !sourceMeta.height) return false;
+    const ratio = (currentMeta.width * currentMeta.height) / (sourceMeta.width * sourceMeta.height);
+    return ratio >= WHOLE_PAGE_AREA_RATIO;
+  } catch (err) {
+    return false;
+  }
+}
+
 async function tick() {
   if (running) return;
   if (Date.now() < quotaExhaustedUntil) return;
   running = true;
   try {
     const db = getDB();
+    // Two shapes of the same underlying problem, in one query: media_url
+    // NULL (never got a diagram at all) and media_url present but never
+    // actually checked (might be a fine crop, might be a whole-page
+    // fallback from an older import — looksLikeUncroppedPage sorts that out
+    // per-row below, since it needs the actual image bytes to compare).
     const [rows] = await db.execute(
-      `SELECT q.id, q.question_text, q.question_number, sp.file_path AS source_file_path
+      `SELECT q.id, q.question_text, q.question_number, q.media_url, sp.file_path AS source_file_path
        FROM questions q
        JOIN staged_questions sq ON sq.published_question_id = q.id
        JOIN source_papers sp ON sp.id = sq.source_paper_id
        WHERE q.is_active = TRUE
-         AND q.media_url IS NULL
          AND q.diagram_checked_at IS NULL
          AND sp.file_path IS NOT NULL
          AND (${keywordWhere})
@@ -67,7 +102,7 @@ async function tick() {
     );
     if (!rows.length) return; // quiet until new gaps appear
 
-    let cropped = 0, noDiagramFound = 0, cropFailed = 0;
+    let cropped = 0, noDiagramFound = 0, cropFailed = 0, alreadyFine = 0;
     for (const question of rows) {
       const fullPath = path.join(SOURCE_PAPERS_DIR, question.source_file_path);
       let buffer;
@@ -81,6 +116,16 @@ async function tick() {
         // "Fix / Re-crop Diagrams" tool (which asks for a fresh zip upload)
         // is the real recovery path for this specific failure.
         await db.execute('UPDATE questions SET diagram_checked_at=NOW() WHERE id=?', [question.id]);
+        continue;
+      }
+
+      // A media_url is already set — only worth re-checking if it looks
+      // like it's actually the whole page rather than a real crop. If it's
+      // a normal, properly-sized crop, leave it alone: don't burn an AI
+      // call re-verifying something that isn't broken.
+      if (question.media_url && !(await looksLikeUncroppedPage(question.media_url, buffer))) {
+        await db.execute('UPDATE questions SET diagram_checked_at=NOW() WHERE id=?', [question.id]);
+        alreadyFine++;
         continue;
       }
 
@@ -104,21 +149,34 @@ async function tick() {
       if (verdict.has_diagram && verdict.diagram_box) {
         const url = await cropDiagram(buffer, verdict.diagram_box);
         if (url) {
-          await db.execute('UPDATE questions SET media_url=?, diagram_checked_at=NOW() WHERE id=?', [url, question.id]);
+          // Clearing answer_solve_attempted_at (not just setting media_url)
+          // means autoAnswerSolver.js picks this question back up on its
+          // very next tick instead of waiting out the rest of a 24h
+          // cooldown from a stale attempt against the old, uncropped image
+          // — a fresh diagram is often exactly what makes a previously
+          // "unsolvable" question solvable.
+          await db.execute('UPDATE questions SET media_url=?, diagram_checked_at=NOW(), answer_solve_attempted_at=NULL WHERE id=?', [url, question.id]);
           cropped++;
         } else {
           await db.execute('UPDATE questions SET diagram_checked_at=NOW() WHERE id=?', [question.id]);
           cropFailed++;
         }
-      } else {
+      } else if (!question.media_url) {
         // Confirmed: this question genuinely has no diagram of its own —
         // correctly stays with media_url NULL, just no longer re-checked.
         await db.execute('UPDATE questions SET diagram_checked_at=NOW() WHERE id=?', [question.id]);
         noDiagramFound++;
+      } else {
+        // Had a whole-page-looking media_url, but the AI also couldn't
+        // locate a real figure for this question — leave the existing
+        // (imperfect) image in place rather than deleting it down to
+        // nothing, but stop re-checking it every tick.
+        await db.execute('UPDATE questions SET diagram_checked_at=NOW() WHERE id=?', [question.id]);
+        cropFailed++;
       }
     }
-    if (cropped || noDiagramFound || cropFailed) {
-      console.log(`🖼️  Auto-cropper: cropped ${cropped}, confirmed-no-diagram ${noDiagramFound}, crop-failed ${cropFailed} this batch`);
+    if (cropped || noDiagramFound || cropFailed || alreadyFine) {
+      console.log(`🖼️  Auto-cropper: cropped ${cropped}, confirmed-no-diagram ${noDiagramFound}, crop-failed ${cropFailed}, already-fine ${alreadyFine} this batch`);
     }
   } catch (err) {
     console.error('🖼️  Auto-cropper tick failed:', err.message);
