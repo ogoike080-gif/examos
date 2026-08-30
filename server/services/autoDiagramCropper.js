@@ -83,13 +83,13 @@ async function tick() {
   running = true;
   try {
     const db = getDB();
-    // Two shapes of the same underlying problem, in one query: media_url
-    // NULL (never got a diagram at all) and media_url present but never
-    // actually checked (might be a fine crop, might be a whole-page
-    // fallback from an older import — looksLikeUncroppedPage sorts that out
-    // per-row below, since it needs the actual image bytes to compare).
-    const [rows] = await db.execute(
-      `SELECT q.id, q.question_text, q.question_number, q.media_url, sp.file_path AS source_file_path
+
+    // Path A: questions imported through the newer staged-review pipeline
+    // (routes/importBatches.js) — these know exactly which source_papers
+    // row they came from via staged_questions.published_question_id.
+    const [directRows] = await db.execute(
+      `SELECT q.id, q.question_text, q.question_number, q.media_url,
+              sp.file_path AS source_file_path
        FROM questions q
        JOIN staged_questions sq ON sq.published_question_id = q.id
        JOIN source_papers sp ON sp.id = sq.source_paper_id
@@ -100,29 +100,50 @@ async function tick() {
        LIMIT ${BATCH_SIZE}`,
       keywordParams
     );
-    if (!rows.length) return; // quiet until new gaps appear
 
-    let cropped = 0, noDiagramFound = 0, cropFailed = 0, alreadyFine = 0;
-    for (const question of rows) {
+    // Path B: questions imported through the OLDER, direct pipeline
+    // (routes/import.js) — these were inserted straight into `questions`
+    // with no staged_questions row at all, so there's no exact link back to
+    // a specific source_papers page. The best we can do is narrow by
+    // exam_body + subject_id + the year embedded in `tags` (see
+    // routes/import.js — tags always include the exam_body and year
+    // strings), which usually leaves a handful of page photos to check
+    // rather than one exact match. locateQuestionDiagram's found_on_page
+    // flag is what actually confirms which (if any) of those pages is the
+    // right one — see the search loop below.
+    const remainingSlots = Math.max(0, BATCH_SIZE - directRows.length);
+    let fallbackRows = [];
+    if (remainingSlots > 0) {
+      const [rows] = await db.execute(
+        `SELECT q.id, q.question_text, q.question_number, q.media_url, q.exam_body, q.subject_id, q.tags
+         FROM questions q
+         LEFT JOIN staged_questions sq ON sq.published_question_id = q.id
+         WHERE q.is_active = TRUE
+           AND q.diagram_checked_at IS NULL
+           AND sq.id IS NULL
+           AND q.exam_body IS NOT NULL
+           AND (${keywordWhere})
+         LIMIT ${remainingSlots}`,
+        keywordParams
+      );
+      fallbackRows = rows;
+    }
+
+    if (!directRows.length && !fallbackRows.length) return; // quiet until new gaps appear
+
+    let cropped = 0, noDiagramFound = 0, cropFailed = 0, alreadyFine = 0, noPageMatch = 0;
+
+    // ── Path A: exact source page already known ──
+    for (const question of directRows) {
       const fullPath = path.join(SOURCE_PAPERS_DIR, question.source_file_path);
       let buffer;
       try {
         buffer = fs.readFileSync(fullPath);
       } catch (err) {
-        // Archived photo itself is gone from disk (e.g. a deploy without a
-        // persistent volume wiped uploads/) — nothing this job can do about
-        // that, and retrying it every tick forever would be pointless.
-        // Marking it checked keeps it out of future batches; the manual
-        // "Fix / Re-crop Diagrams" tool (which asks for a fresh zip upload)
-        // is the real recovery path for this specific failure.
         await db.execute('UPDATE questions SET diagram_checked_at=NOW() WHERE id=?', [question.id]);
         continue;
       }
 
-      // A media_url is already set — only worth re-checking if it looks
-      // like it's actually the whole page rather than a real crop. If it's
-      // a normal, properly-sized crop, leave it alone: don't burn an AI
-      // call re-verifying something that isn't broken.
       if (question.media_url && !(await looksLikeUncroppedPage(question.media_url, buffer))) {
         await db.execute('UPDATE questions SET diagram_checked_at=NOW() WHERE id=?', [question.id]);
         alreadyFine++;
@@ -141,20 +162,14 @@ async function tick() {
         if (err.isQuotaExceeded) {
           quotaExhaustedUntil = Date.now() + (err.retryDelaySeconds ? err.retryDelaySeconds * 1000 : DEFAULT_QUOTA_COOLDOWN_MS);
           console.log(`🖼️  Auto-cropper: AI quota reached, pausing until ${new Date(quotaExhaustedUntil).toISOString()}`);
-          break; // leave diagram_checked_at untouched — this one gets retried once quota resets
+          break;
         }
-        continue; // any other AI error — leave unmarked, try again next tick
+        continue;
       }
 
       if (verdict.has_diagram && verdict.diagram_box) {
         const url = await cropDiagram(buffer, verdict.diagram_box);
         if (url) {
-          // Clearing answer_solve_attempted_at (not just setting media_url)
-          // means autoAnswerSolver.js picks this question back up on its
-          // very next tick instead of waiting out the rest of a 24h
-          // cooldown from a stale attempt against the old, uncropped image
-          // — a fresh diagram is often exactly what makes a previously
-          // "unsolvable" question solvable.
           await db.execute('UPDATE questions SET media_url=?, diagram_checked_at=NOW(), answer_solve_attempted_at=NULL WHERE id=?', [url, question.id]);
           cropped++;
         } else {
@@ -162,21 +177,108 @@ async function tick() {
           cropFailed++;
         }
       } else if (!question.media_url) {
-        // Confirmed: this question genuinely has no diagram of its own —
-        // correctly stays with media_url NULL, just no longer re-checked.
         await db.execute('UPDATE questions SET diagram_checked_at=NOW() WHERE id=?', [question.id]);
         noDiagramFound++;
       } else {
-        // Had a whole-page-looking media_url, but the AI also couldn't
-        // locate a real figure for this question — leave the existing
-        // (imperfect) image in place rather than deleting it down to
-        // nothing, but stop re-checking it every tick.
         await db.execute('UPDATE questions SET diagram_checked_at=NOW() WHERE id=?', [question.id]);
         cropFailed++;
       }
     }
-    if (cropped || noDiagramFound || cropFailed || alreadyFine) {
-      console.log(`🖼️  Auto-cropper: cropped ${cropped}, confirmed-no-diagram ${noDiagramFound}, crop-failed ${cropFailed}, already-fine ${alreadyFine} this batch`);
+
+    // ── Path B: search candidate pages for questions with no direct link ──
+    const MAX_PAGES_TO_SEARCH = 4; // bounds AI calls per question when the exam_body+year+subject match is broad
+    for (const question of fallbackRows) {
+      if (Date.now() < quotaExhaustedUntil) break; // hit quota partway through Path A or an earlier Path B question — stop entirely, don't keep hammering the rest of this batch in the same tick
+      let year = null;
+      try {
+        const tags = Array.isArray(question.tags) ? question.tags : JSON.parse(question.tags || '[]');
+        year = tags.find(t => /^(19|20)\d{2}$/.test(String(t).trim()));
+      } catch { /* no usable year tag — subject_id/exam_body alone still narrows it down */ }
+
+      const params = [question.exam_body];
+      let whereClause = 'exam_body = ?';
+      if (year) { whereClause += ' AND year = ?'; params.push(year); }
+      if (question.subject_id) { whereClause += ' AND subject_id = ?'; params.push(question.subject_id); }
+
+      const [pages] = await db.execute(
+        `SELECT file_path FROM source_papers WHERE ${whereClause} AND file_path IS NOT NULL LIMIT ${MAX_PAGES_TO_SEARCH}`,
+        params
+      );
+      if (!pages.length) {
+        // No archived page even matches this question's own exam_body/year/
+        // subject — nothing to search, and won't suddenly appear later.
+        await db.execute('UPDATE questions SET diagram_checked_at=NOW() WHERE id=?', [question.id]);
+        noPageMatch++;
+        continue;
+      }
+
+      let found = false;
+      for (const page of pages) {
+        const fullPath = path.join(SOURCE_PAPERS_DIR, page.file_path);
+        let buffer;
+        try { buffer = fs.readFileSync(fullPath); } catch { continue; }
+
+        if (question.media_url && !(await looksLikeUncroppedPage(question.media_url, buffer))) {
+          // media_url already looks like a fine crop relative to THIS
+          // candidate page's size — treat it as confirmed rather than
+          // searching further pages unnecessarily.
+          found = true;
+          await db.execute('UPDATE questions SET diagram_checked_at=NOW() WHERE id=?', [question.id]);
+          alreadyFine++;
+          break;
+        }
+
+        let verdict;
+        try {
+          verdict = await locateQuestionDiagram({
+            imageBase64: buffer.toString('base64'),
+            mediaType: mediaTypeFor(fullPath),
+            question_number: question.question_number,
+            question_text: question.question_text,
+          });
+        } catch (err) {
+          if (err.isQuotaExceeded) {
+            quotaExhaustedUntil = Date.now() + (err.retryDelaySeconds ? err.retryDelaySeconds * 1000 : DEFAULT_QUOTA_COOLDOWN_MS);
+            console.log(`🖼️  Auto-cropper: AI quota reached, pausing until ${new Date(quotaExhaustedUntil).toISOString()}`);
+            found = true; // stop searching further pages/questions this tick — not "found", just bailing out cleanly
+            break;
+          }
+          continue; // this page failed to analyze — try the next candidate page
+        }
+
+        if (verdict.found_on_page) {
+          found = true;
+          if (verdict.has_diagram && verdict.diagram_box) {
+            const url = await cropDiagram(buffer, verdict.diagram_box);
+            if (url) {
+              await db.execute('UPDATE questions SET media_url=?, diagram_checked_at=NOW(), answer_solve_attempted_at=NULL WHERE id=?', [url, question.id]);
+              cropped++;
+            } else {
+              await db.execute('UPDATE questions SET diagram_checked_at=NOW() WHERE id=?', [question.id]);
+              cropFailed++;
+            }
+          } else {
+            await db.execute('UPDATE questions SET diagram_checked_at=NOW() WHERE id=?', [question.id]);
+            noDiagramFound++;
+          }
+          break; // found the right page — no need to check the remaining candidates
+        }
+        // found_on_page: false — wrong page, keep searching the next candidate
+      }
+      if (!found) {
+        // Searched every candidate page and never found this question on
+        // any of them — most likely the paper spans more pages than were
+        // archived, or the question text drifted enough from the page scan
+        // that the model couldn't match it. Mark checked so this doesn't
+        // re-run every tick; the manual "Fix / Re-crop Diagrams" tool still
+        // works for it if someone wants to chase it down by hand.
+        await db.execute('UPDATE questions SET diagram_checked_at=NOW() WHERE id=?', [question.id]);
+        noPageMatch++;
+      }
+    }
+
+    if (cropped || noDiagramFound || cropFailed || alreadyFine || noPageMatch) {
+      console.log(`🖼️  Auto-cropper: cropped ${cropped}, confirmed-no-diagram ${noDiagramFound}, crop-failed ${cropFailed}, already-fine ${alreadyFine}, no-page-match ${noPageMatch} this batch`);
     }
   } catch (err) {
     console.error('🖼️  Auto-cropper tick failed:', err.message);
