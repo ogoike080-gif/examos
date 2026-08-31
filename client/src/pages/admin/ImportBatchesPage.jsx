@@ -26,6 +26,80 @@ const labelS = { fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', text
 const cardS  = { background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 'var(--r-xl)', padding: '20px' };
 const inputS = { width: '100%', padding: '10px 12px', borderRadius: 'var(--r)', border: '1.5px solid var(--border-md)', background: 'var(--bg-raised)', color: 'var(--text-primary)', fontFamily: 'var(--font-body)', fontSize: 14 };
 
+// Edits a batch's own exam_body/year/subject/paper_type. Deliberately does
+// NOT relabel any questions it already published to the live bank — see the
+// comment on PUT /:id in routes/importBatches.js for why; this only affects
+// the batch record itself.
+function EditBatchModal({ batch, subjects, examBodies, onClose, onDone }) {
+  const [examBody, setExamBody] = useState(batch.exam_body || '');
+  const [year, setYear] = useState(batch.year || '');
+  const [subjectId, setSubjectId] = useState(batch.subject_id || '');
+  const [paperType, setPaperType] = useState(batch.paper_type || 'objective');
+  const [saving, setSaving] = useState(false);
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      await importBatchAPI.update(batch.id, { exam_body: examBody, year, subject_id: subjectId || null, paper_type: paperType });
+      toast.success('Batch updated');
+      onDone();
+      onClose();
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Update failed');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="modal-backdrop" onClick={e => e.target === e.currentTarget && !saving && onClose()}>
+      <div className="modal" style={{ maxWidth: 420 }}>
+        <div className="modal-header">
+          <h3>Edit Batch</h3>
+          <button onClick={() => !saving && onClose()} style={{ background:'var(--bg-raised)', border:'1px solid var(--border)', borderRadius:'var(--r)', width:30, height:30, cursor:'pointer' }}>✕</button>
+        </div>
+        <div className="modal-body">
+          {batch.status === 'published' && (
+            <p style={{ fontSize:12.5, color:'var(--warning)', background:'var(--warning-dim)', borderRadius:8, padding:'8px 10px', marginBottom:14, lineHeight:1.5 }}>
+              This batch already published questions to the live bank — changing these fields relabels the batch itself, not the questions it already published. Fix those individually in Question Bank if they need relabelling too.
+            </p>
+          )}
+          <div style={{ display:'flex', flexDirection:'column', gap:12 }}>
+            <div>
+              <label style={labelS}>Exam Body</label>
+              <select value={examBody} onChange={e => setExamBody(e.target.value)} style={inputS}>
+                {examBodies.map(b => <option key={b.code || b.id} value={b.code || b.id}>{b.name || b.code}</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={labelS}>Year</label>
+              <input value={year} onChange={e => setYear(e.target.value)} style={inputS} />
+            </div>
+            <div>
+              <label style={labelS}>Subject</label>
+              <select value={subjectId} onChange={e => setSubjectId(e.target.value)} style={inputS}>
+                <option value="">— none —</option>
+                {subjects.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={labelS}>Paper Type</label>
+              <select value={paperType} onChange={e => setPaperType(e.target.value)} style={inputS}>
+                {PAPER_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </div>
+          </div>
+        </div>
+        <div className="modal-footer">
+          <button className="btn btn-secondary" onClick={onClose} disabled={saving}>Cancel</button>
+          <button className="btn btn-primary" onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
 export default function ImportBatchesPage() {
   const navigate = useNavigate();
   const fileRef = useRef(null);
@@ -87,6 +161,34 @@ export default function ImportBatchesPage() {
       .finally(() => setLoading(false));
   };
 
+  const [editingBatch, setEditingBatch] = useState(null); // the batch object, or null when the edit modal is closed
+
+  const handleDeleteBatch = async (batch, e) => {
+    e.stopPropagation(); // don't trigger the row's own onClick (navigate to detail page)
+    if (batch.status === 'published') {
+      const ok = window.confirm(
+        `"${batch.exam_body} ${batch.year}${batch.subject_name ? ` ${batch.subject_name}` : ''}" has already published questions to the live question bank. Deleting it will also DEACTIVATE every question it published — students will no longer see them (this is reversible per-question from Question Bank, but not from here).\n\nDelete anyway?`
+      );
+      if (!ok) return;
+      try {
+        const res = await importBatchAPI.cancel(batch.id, true);
+        toast.success(res.data.message || 'Batch deleted');
+        loadBatches();
+      } catch (err) {
+        toast.error(err.response?.data?.error || 'Delete failed');
+      }
+      return;
+    }
+    if (!window.confirm(`Delete "${batch.exam_body} ${batch.year}${batch.subject_name ? ` ${batch.subject_name}` : ''}"? This removes it and any staged (not-yet-published) questions in it.`)) return;
+    try {
+      await importBatchAPI.cancel(batch.id);
+      toast.success('Batch deleted');
+      loadBatches();
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Delete failed');
+    }
+  };
+
   const set = (k, v) => setConfig(c => ({ ...c, [k]: v }));
 
   const handleUpload = async (file) => {
@@ -142,6 +244,15 @@ export default function ImportBatchesPage() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+      {editingBatch && (
+        <EditBatchModal
+          batch={editingBatch}
+          subjects={subjects}
+          examBodies={examBodies}
+          onClose={() => setEditingBatch(null)}
+          onDone={loadBatches}
+        />
+      )}
       <div>
         <h1 style={{ fontSize: '1.5rem', marginBottom: 4 }}>Import (Reviewed Pipeline)</h1>
         <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>
@@ -266,8 +377,8 @@ export default function ImportBatchesPage() {
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
               <thead>
                 <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--border)' }}>
-                  {['Exam', 'Year', 'Subject', 'Paper', 'Extracted', 'Verified', 'Needs Review', 'Conflicts', 'Quality', 'Status', ''].map(h => (
-                    <th key={h} style={{ padding: '8px 10px', color: 'var(--text-muted)', fontWeight: 700, fontSize: 11, textTransform: 'uppercase' }}>{h}</th>
+                  {['Exam', 'Year', 'Subject', 'Paper', 'Extracted', 'Verified', 'Needs Review', 'Conflicts', 'Quality', 'Status', '', ''].map((h, i) => (
+                    <th key={`${h}-${i}`} style={{ padding: '8px 10px', color: 'var(--text-muted)', fontWeight: 700, fontSize: 11, textTransform: 'uppercase' }}>{h}</th>
                   ))}
                 </tr>
               </thead>
@@ -292,6 +403,24 @@ export default function ImportBatchesPage() {
                         </span>
                       </td>
                       <td style={{ padding: '10px', color: 'var(--brand-light)', fontWeight: 700 }}>Review →</td>
+                      <td style={{ padding: '10px' }} onClick={e => e.stopPropagation()}>
+                        <div style={{ display: 'flex', gap: 6 }}>
+                          <button
+                            onClick={() => setEditingBatch(b)}
+                            title="Edit exam body / year / subject / paper type"
+                            style={{ background: 'var(--bg-raised)', border: '1px solid var(--border)', borderRadius: 'var(--r)', padding: '5px 9px', fontSize: 12, cursor: 'pointer', color: 'var(--text-secondary)' }}
+                          >
+                            ✏️ Edit
+                          </button>
+                          <button
+                            onClick={(e) => handleDeleteBatch(b, e)}
+                            title={b.status === 'published' ? 'Delete this batch AND deactivate the questions it published' : 'Delete this batch'}
+                            style={{ background: 'var(--bg-raised)', border: '1px solid var(--border)', borderRadius: 'var(--r)', padding: '5px 9px', fontSize: 12, cursor: 'pointer', color: 'var(--danger, #DC2626)' }}
+                          >
+                            🗑️ Delete
+                          </button>
+                        </div>
+                      </td>
                     </tr>
                   );
                 })}

@@ -1014,16 +1014,79 @@ router.post('/:id/publish', authenticate, authorize('superadmin', 'admin'), asyn
 });
 
 // DELETE /api/import/batches/:id — cancel a batch still in review (staged rows cascade-delete)
+// DELETE /api/import/batches/:id — cancels/removes a batch. A batch that's
+// already published questions to the live table is a special case: those
+// live rows aren't touched by the staged_questions/import_batches cascade
+// (they're a separate table entirely, and staged_questions.published_
+// question_id is the only link back), so deleting the batch normally would
+// leave the batch record gone while the questions it published stay live
+// forever with no way to trace which import created them. `force=true`
+// (or force in the request body) explicitly opts into that consequence:
+// every question this batch published gets deactivated (is_active=FALSE —
+// the same soft-delete every other "Delete" button in this app uses, so
+// it's reversible from Question Bank if needed) before the batch itself is
+// removed.
 router.delete('/:id', authenticate, authorize('superadmin', 'admin'), async (req, res) => {
   try {
     const db = getDB();
+    const force = req.query.force === 'true' || req.body?.force === true;
     const [rows] = await db.execute('SELECT status FROM import_batches WHERE id=?', [req.params.id]);
     if (!rows[0]) return res.status(404).json({ error: 'Batch not found' });
+
+    let deactivated = 0;
     if (rows[0].status === 'published') {
-      return res.status(400).json({ error: 'This batch has already published questions to the live bank and cannot be deleted — individual questions can still be edited or deactivated from Question Bank' });
+      if (!force) {
+        return res.status(400).json({
+          error: 'This batch has already published questions to the live bank. Pass force=true to also deactivate those questions, or edit/deactivate them individually from Question Bank instead.',
+          code: 'PUBLISHED_BATCH_REQUIRES_FORCE',
+        });
+      }
+      const [published] = await db.execute(
+        'SELECT published_question_id FROM staged_questions WHERE import_batch_id=? AND published_question_id IS NOT NULL',
+        [req.params.id]
+      );
+      const ids = published.map(r => r.published_question_id);
+      if (ids.length) {
+        await db.execute(
+          `UPDATE questions SET is_active = FALSE WHERE id IN (${ids.map(() => '?').join(',')})`,
+          ids
+        );
+        deactivated = ids.length;
+      }
     }
-    await db.execute('DELETE FROM import_batches WHERE id=?', [req.params.id]);
-    res.json({ message: 'Batch cancelled and removed' });
+
+    await db.execute('DELETE FROM import_batches WHERE id=?', [req.params.id]); // cascades to staged_questions + batch_pages
+    res.json({
+      message: deactivated
+        ? `Batch deleted and ${deactivated} live question(s) it published were deactivated`
+        : 'Batch cancelled and removed',
+      deactivated,
+    });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// PUT /api/import/batches/:id — edits the batch's own exam_body/year/
+// subject_id/paper_type. Deliberately does NOT touch any already-published
+// live questions' own exam_body/tags — those were baked in at publish time
+// (see the publish endpoint above), so correcting a batch's metadata after
+// publishing fixes future imports/labelling but won't retroactively relabel
+// questions already in front of students. Fix those individually in
+// Question Bank if a batch was published under the wrong exam_body/year.
+router.put('/:id', authenticate, authorize('superadmin', 'admin'), async (req, res) => {
+  try {
+    const db = getDB();
+    const { exam_body, year, subject_id, paper_type } = req.body;
+    const fields = [];
+    const params = [];
+    if (exam_body !== undefined) { fields.push('exam_body=?'); params.push(exam_body); }
+    if (year !== undefined) { fields.push('year=?'); params.push(year); }
+    if (subject_id !== undefined) { fields.push('subject_id=?'); params.push(subject_id || null); }
+    if (paper_type !== undefined) { fields.push('paper_type=?'); params.push(paper_type); }
+    if (!fields.length) return res.status(400).json({ error: 'Nothing to update' });
+    params.push(req.params.id);
+    const [result] = await db.execute(`UPDATE import_batches SET ${fields.join(', ')} WHERE id=?`, params);
+    if (!result.affectedRows) return res.status(404).json({ error: 'Batch not found' });
+    res.json({ message: 'Batch updated' });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
