@@ -689,6 +689,29 @@ router.post('/backfill-explanations', authenticate, async (req, res) => {
 // an admin finds and fixes/deactivates the existing backlog from the
 // Question Bank UI, rather than stumbling onto them one at a time the way a
 // student would.
+// POST /api/questions/recheck-diagrams — clears diagram_checked_at on every
+// live question that has one, so services/autoDiagramCropper.js gives them
+// all a fresh look on its next tick instead of skipping them as "already
+// checked". Exists specifically to recover from a bug where a transient
+// Gemini 503 (high demand) during that check got misread as a genuine "not
+// found" and marked permanently skipped — a handful of questions can get
+// stuck that way whenever the AI has a bad moment. Safe to run any time:
+// already-correct crops just get cheaply re-confirmed (a local pixel-
+// dimension comparison, no AI call) and re-marked checked; only ones that
+// still look wrong get a real recrop attempt.
+router.post('/recheck-diagrams', authenticate, authorize('superadmin', 'admin'), async (req, res) => {
+  try {
+    const db = getDB();
+    const [result] = await db.execute(
+      `UPDATE questions SET diagram_checked_at = NULL WHERE is_active = TRUE AND diagram_checked_at IS NOT NULL`
+    );
+    res.json({ message: `${result.affectedRows} question(s) queued for a fresh diagram check on the next auto-cropper tick`, reset: result.affectedRows });
+  } catch (err) {
+    console.error('POST /questions/recheck-diagrams error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.get('/flagged/bad-options', authenticate, authorize('superadmin', 'admin'), async (req, res) => {
   try {
     const db = getDB();

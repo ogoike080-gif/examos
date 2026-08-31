@@ -74,6 +74,11 @@ export const questionAPI = {
   // diagram-based option the import pipeline couldn't transcribe. See
   // hasRealOptionContent in utils/answerQuality.js.
   flaggedBadOptions: () => axios.get(`${API}/questions/flagged/bad-options`),
+  // Recovery tool for services/autoDiagramCropper.js — see routes/questions.js
+  // recheck-diagrams for why this is sometimes needed (a transient AI error
+  // during the automatic check can get a question stuck as "checked" without
+  // ever really being fixed).
+  recheckDiagrams: () => axios.post(`${API}/questions/recheck-diagrams`),
 };
 
 // ── PROCTOR ───────────────────────────────────────────────────

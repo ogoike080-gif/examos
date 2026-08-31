@@ -306,6 +306,19 @@ export default function QuestionBankPage() {
 
   const [showRepair, setShowRepair] = useState(false);
   const [showFlagged, setShowFlagged] = useState(false);
+  const [rechecking, setRechecking] = useState(false);
+
+  const runRecheckDiagrams = async () => {
+    setRechecking(true);
+    try {
+      const res = await questionAPI.recheckDiagrams();
+      toast.success(res.data.message || 'Queued for recheck');
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Recheck failed');
+    } finally {
+      setRechecking(false);
+    }
+  };
 
   return (
     <div className={styles.page}>
@@ -332,6 +345,9 @@ export default function QuestionBankPage() {
           </Button>
           <Button variant="ghost" onClick={() => setShowRepair(true)}>
             🖼️ Fix / Re-crop Diagrams
+          </Button>
+          <Button variant="ghost" onClick={runRecheckDiagrams} disabled={rechecking} title="Gives every already-checked diagram a fresh automatic look — use this if some got stuck 'checked' due to a temporary AI outage">
+            {rechecking ? '⏳ Queuing…' : '🔄 Recheck All Diagrams'}
           </Button>
           <Button variant="ghost" onClick={() => setShowFlagged(true)}>
             🚩 Flagged Options

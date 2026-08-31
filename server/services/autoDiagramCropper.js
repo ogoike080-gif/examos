@@ -166,6 +166,14 @@ async function tick() {
         }
         continue;
       }
+      // locateQuestionDiagram catches its own non-quota errors internally
+      // and returns { found_on_page: null, error: '...' } rather than
+      // throwing (Gemini 503/UNAVAILABLE during high demand is the common
+      // case) — that's an inconclusive attempt, not a real "no diagram
+      // here" verdict, and must NOT be treated as one. Leave
+      // diagram_checked_at untouched so this gets a genuine retry next
+      // tick instead of being given up on because of an unrelated outage.
+      if (verdict.error) continue;
 
       if (verdict.has_diagram && verdict.diagram_box) {
         const url = await cropDiagram(buffer, verdict.diagram_box);
@@ -213,6 +221,7 @@ async function tick() {
       }
 
       let found = false;
+      let hadTransientError = false;
       for (const page of pages) {
         const fullPath = path.join(SOURCE_PAPERS_DIR, page.file_path);
         let buffer;
@@ -246,6 +255,14 @@ async function tick() {
           continue; // this page failed to analyze — try the next candidate page
         }
 
+        // locateQuestionDiagram catches its own non-quota errors internally
+        // (Gemini 503/UNAVAILABLE during high demand is the common case)
+        // and returns { found_on_page: null, error: '...' } instead of
+        // throwing — that's an inconclusive check of THIS page, not a real
+        // "not on this page" verdict, so it must not count toward
+        // concluding the question doesn't match any archived page.
+        if (verdict.error) { hadTransientError = true; continue; }
+
         if (verdict.found_on_page) {
           found = true;
           if (verdict.has_diagram && verdict.diagram_box) {
@@ -263,15 +280,23 @@ async function tick() {
           }
           break; // found the right page — no need to check the remaining candidates
         }
-        // found_on_page: false — wrong page, keep searching the next candidate
+        // found_on_page: false, no error — a genuine "not this page", keep searching the next candidate
       }
       if (!found) {
-        // Searched every candidate page and never found this question on
-        // any of them — most likely the paper spans more pages than were
-        // archived, or the question text drifted enough from the page scan
-        // that the model couldn't match it. Mark checked so this doesn't
-        // re-run every tick; the manual "Fix / Re-crop Diagrams" tool still
-        // works for it if someone wants to chase it down by hand.
+        if (hadTransientError) {
+          // At least one candidate page never got a real look (API hiccup,
+          // not a real negative) — leave diagram_checked_at untouched so
+          // this gets retried in full next tick, rather than being marked
+          // as a confirmed no-match on the strength of an outage.
+          continue;
+        }
+        // Searched every candidate page and got a clean, successful
+        // "not found on this page" from all of them — most likely the
+        // paper spans more pages than were archived, or the question text
+        // drifted enough from the page scan that the model couldn't match
+        // it. Mark checked so this doesn't re-run every tick; the manual
+        // "Fix / Re-crop Diagrams" tool still works for it if someone wants
+        // to chase it down by hand.
         await db.execute('UPDATE questions SET diagram_checked_at=NOW() WHERE id=?', [question.id]);
         noPageMatch++;
       }
