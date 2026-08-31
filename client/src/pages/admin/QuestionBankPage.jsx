@@ -304,6 +304,50 @@ export default function QuestionBankPage() {
     }
   };
 
+  // This is the function the "Generate Missing Explanations" button (and
+  // the backfilling/backfillProgress state above) were always meant to
+  // call — it existed as referenced-but-never-defined, which crashed the
+  // whole page with "runBackfill is not defined" the moment this component
+  // tried to render. Same loop-until-done shape as runAnswerFix above.
+  const runBackfill = async () => {
+    setBackfilling(true);
+    let totalGenerated = 0;
+    try {
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        const res = await questionAPI.backfillExplanations({ limit: 15 });
+        const { generated, remaining, quota_exceeded, retry_delay_seconds } = res.data;
+        totalGenerated += generated;
+        setBackfillProgress({ generated: totalGenerated, remaining });
+
+        if (quota_exceeded) {
+          toast(
+            `Generated ${totalGenerated} explanation(s). AI quota reached — ${remaining} still missing one; run this again ${retry_delay_seconds ? `in about ${retry_delay_seconds}s` : 'later'}.`,
+            { icon: '⏳', duration: 8000 }
+          );
+          break;
+        }
+        if (remaining === 0) {
+          toast.success(`Done — every question now has an explanation (${totalGenerated} generated this run).`);
+          break;
+        }
+        if (generated === 0) {
+          // Nothing generated and not quota-exceeded — every remaining
+          // question in this set has no recorded correct answer to explain
+          // from (run "Fix Missing Correct Answers" first) or its options
+          // weren't properly extracted. Stop rather than looping forever.
+          toast(`Stopped — ${remaining} question(s) couldn't get an explanation (likely missing a correct answer, or options weren't properly extracted). Try "Fix Missing Correct Answers" first.`, { icon: '⚠️', duration: 8000 });
+          break;
+        }
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Explanation generation failed');
+    } finally {
+      setBackfilling(false);
+      load();
+    }
+  };
+
   const [showRepair, setShowRepair] = useState(false);
   const [showFlagged, setShowFlagged] = useState(false);
   const [rechecking, setRechecking] = useState(false);
