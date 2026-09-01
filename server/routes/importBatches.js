@@ -718,6 +718,23 @@ router.post('/:id/staged/:stagedId/quick-verify', authenticate, authorize('super
     let correctAnswers;
     try { correctAnswers = Array.isArray(row.correct_answers) ? row.correct_answers : JSON.parse(row.correct_answers || '[]'); } catch { correctAnswers = []; }
 
+    // Catch placeholder-only options ("A"/"B"/"C"/"D" instead of real answer
+    // text — see utils/answerQuality.js) HERE, not just at publish time.
+    // Before this check existed, Quick Verify would happily mark a row like
+    // this "verified" with no complaint, and the ONLY place it ever got
+    // caught was the publish-time guard silently bouncing it back to
+    // needs_review — which from the reviewer's side just looks like
+    // "I verified and published this, and it reverted to review for no
+    // reason", repeatably, with no clue why. Refusing it here instead means
+    // the real problem (the option text itself) surfaces immediately, at
+    // the exact row where it needs fixing.
+    if (row.question_type !== 'essay' && !hasRealOptionContent(options)) {
+      return res.status(400).json({
+        error: 'This question\'s options are just placeholder letters ("A"/"B"/"C"/"D"), not real answer text — fix the option text below before verifying. This is also why publishing a batch containing rows like this sends them back to review instead of actually publishing them.',
+        code: 'PLACEHOLDER_OPTIONS',
+      });
+    }
+
     let autoSolved = false;
     if (!correctAnswers.length && row.question_type === 'mcq' && options.length) {
       const [batchRows] = await db.execute('SELECT subject_id FROM import_batches WHERE id=?', [req.params.id]);

@@ -29,6 +29,8 @@ const parentRoutes    = require('./routes/parent');
 const { initSocket } = require('./socket/socketManager');
 const { startAutoAnswerSolver } = require('./services/autoAnswerSolver');
 const { startAutoDiagramCropper } = require('./services/autoDiagramCropper');
+const jwt = require('jsonwebtoken');
+const { JWT_SECRET } = require('./middleware/auth');
 
 const app = express();
 const server = http.createServer(app);
@@ -117,11 +119,42 @@ app.use(
 app.use(cors(corsOptions));
 
 // Rate limiting
+//
+// This exists to stop abuse (scraping, brute-forcing, a runaway script) —
+// it should never throttle two kinds of perfectly normal, legitimate
+// traffic that were both getting caught in it before:
+//   1. Staff actively working — reviewing/verifying/publishing a batch of
+//      50+ questions one at a time is easily 100+ requests in a few
+//      minutes; 500/15min sounds generous until you're the one doing that
+//      workflow and every few dozen clicks throws a 429 that LOOKS like
+//      your changes are silently failing/reverting (they weren't — the
+//      request just never reached the route handler at all).
+//   2. Many students behind one IP — this is a school exam platform. A
+//      classroom on one shared WiFi connection, or a whole school behind
+//      one NAT gateway, all appear as a single IP to this server. A single
+//      500-request budget shared across an entire class taking a timed
+//      exam simultaneously is nowhere near enough, and would look like the
+//      app randomly breaking for everyone at once.
+// isStaffRequest peeks at the JWT (if any) without the overhead of full
+// route-level auth — this middleware runs before any route's own
+// authenticate() call, so req.user isn't populated yet at this point.
+function isStaffRequest(req) {
+  try {
+    const header = req.headers.authorization || '';
+    const token = header.startsWith('Bearer ') ? header.slice(7) : null;
+    if (!token) return false;
+    const decoded = jwt.verify(token, JWT_SECRET);
+    return decoded.role === 'admin' || decoded.role === 'superadmin' || decoded.role === 'examiner';
+  } catch {
+    return false; // missing/expired/invalid token — let the normal limit (and the route's own auth) handle it
+  }
+}
+
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 500,
+  max: 3000, // was 500 — too low for a shared school IP; see comment above
   message: { error: 'Too many requests, please try again later.' },
-  skip: (req) => req.ip === '127.0.0.1' || req.ip === '::1',
+  skip: (req) => req.ip === '127.0.0.1' || req.ip === '::1' || isStaffRequest(req),
 });
 app.use('/api/', apiLimiter);
 

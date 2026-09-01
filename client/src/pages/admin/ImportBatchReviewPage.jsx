@@ -266,7 +266,18 @@ export default function ImportBatchReviewPage() {
     setPublishing(true);
     try {
       const res = await importBatchAPI.publish(id);
-      toast.success(res.data.message);
+      if (res.data.held_for_review > 0) {
+        // Distinct from a clean success — some rows that looked "verified"
+        // turned out to have placeholder-only options and got bounced back
+        // rather than actually published (see the publish-time guard in
+        // routes/importBatches.js). A plain green toast here reads as "all
+        // good", which is exactly what caused the "I keep publishing and it
+        // reverts to review" confusion — a longer, warning-styled toast
+        // makes it clear this run was partial and why.
+        toast(res.data.message, { icon: '⚠️', duration: 9000 });
+      } else {
+        toast.success(res.data.message);
+      }
       load();
     } catch (err) {
       toast.error(err.response?.data?.error || 'Publish failed');
