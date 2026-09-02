@@ -1,7 +1,7 @@
 {
-  "name": "ExamOS 2.0 — CBT Platform",
-  "short_name": "ExamOS",
-  "description": "AI-powered Computer Based Testing platform for Nigerian schools",
+  "name": "Examora — Nigeria's AI-Powered Examination Ecosystem",
+  "short_name": "Examora",
+  "description": "AI-powered examination ecosystem for Nigerian schools — CBT practice, tutoring, and analytics",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#F8F8FC",

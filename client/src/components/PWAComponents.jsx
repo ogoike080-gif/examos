@@ -81,7 +81,7 @@ export function InstallBanner() {
         boxShadow:'0 4px 12px var(--brand-glow)',
       }}>E</div>
       <div style={{ flex:1, minWidth:0 }}>
-        <div style={{ fontSize:13, fontWeight:700, marginBottom:2 }}>Install ExamOS</div>
+        <div style={{ fontSize:13, fontWeight:700, marginBottom:2 }}>Install Examora</div>
         <div style={{ fontSize:11, color:'var(--text-muted)' }}>Add to home screen for offline access</div>
       </div>
       <div style={{ display:'flex', gap:8, flexShrink:0 }}>

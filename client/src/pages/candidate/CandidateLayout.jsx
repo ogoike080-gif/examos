@@ -39,7 +39,7 @@ export function CandidateLayout() {
         <div style={{ display:'flex', alignItems:'center', gap:10 }}>
           <div style={{ width:30, height:30, borderRadius:9, background:'linear-gradient(135deg,var(--brand-dark),var(--brand-light))', display:'flex', alignItems:'center', justifyContent:'center', fontSize:15, fontWeight:900, color:'#fff', boxShadow:'0 2px 10px var(--brand-glow)' }}>E</div>
           <div>
-            <div style={{ fontFamily:'var(--font-display)', fontSize:14, fontWeight:800, letterSpacing:'-0.02em', lineHeight:1 }}>ExamOS</div>
+            <div style={{ fontFamily:'var(--font-display)', fontSize:14, fontWeight:800, letterSpacing:'-0.02em', lineHeight:1 }}>Examora</div>
             <div style={{ fontSize:10, color:'var(--text-muted)' }}>Student Portal</div>
           </div>
         </div>
@@ -352,7 +352,7 @@ export function ResultsPage() {
       </div>
 
       <div style={{ textAlign:'center', fontSize:10, color:'var(--text-dim)', marginTop:12 }}>
-        REF: {sessionId?.slice(0,16).toUpperCase()} · This result is computer-generated and valid without signature. · ExamOS 2.0
+        REF: {sessionId?.slice(0,16).toUpperCase()} · This result is computer-generated and valid without signature. · Examora
       </div>
     </div>
   );

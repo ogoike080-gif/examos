@@ -9,6 +9,18 @@ const STATS = [
   { val:'98%',     label:'Pass Rate',   icon:'🎯' },
 ];
 
+const PRODUCTS = [
+  { icon:'🤖', name:'Examora AI',         desc:'Your personal AI tutor.' },
+  { icon:'📚', name:'Examora Library',    desc:'WAEC, NECO, JAMB and GCE learning resources.' },
+  { icon:'📝', name:'Examora CBT',        desc:'Realistic computer-based examination simulations.' },
+  { icon:'🧠', name:'Examora Tutor',      desc:'AI explanations for difficult questions.' },
+  { icon:'📊', name:'Examora Analytics',  desc:'Performance tracking and weak-topic identification.' },
+  { icon:'🎯', name:'Examora Coach',      desc:'Personalised study plans.' },
+  { icon:'🎓', name:'Examora Admissions', desc:'JAMB score guidance, university information and admission planning.' },
+  { icon:'🏆', name:'Examora Challenge',  desc:'Competitions, leaderboards and rewards.' },
+  { icon:'👨‍👩‍👧', name:'Examora Parent', desc:'Parents can monitor their child\'s study progress.' },
+];
+
 const FEATURES = [
   { icon:'🤖', title:'AI Study Assistant',     desc:'Get instant explanations, hints, and personalized study plans powered by Claude AI.' },
   { icon:'⚡', title:'Lightning Fast Engine',  desc:'Questions load instantly. No page reloads. Auto-save. Resume after network failure.' },
@@ -59,7 +71,7 @@ export default function LandingPage() {
       }}>
         <div style={{ display:'flex', alignItems:'center', gap:10 }}>
           <div style={{ width:32, height:32, borderRadius:9, background:'linear-gradient(135deg,#4F46E5,#818CF8)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:16, fontWeight:900, color:'#fff', boxShadow:'0 2px 10px rgba(99,102,241,0.4)' }}>E</div>
-          <span style={{ fontFamily:'var(--font-display)', fontSize:16, fontWeight:800, letterSpacing:'-0.02em' }}>ExamOS</span>
+          <span style={{ fontFamily:'var(--font-display)', fontSize:16, fontWeight:800, letterSpacing:'-0.02em' }}>Examora</span>
           <span style={{ fontSize:10, background:'var(--brand-dim)', color:'var(--brand-light)', padding:'2px 8px', borderRadius:'var(--r-full)', fontWeight:700, letterSpacing:'0.04em' }}>2.0</span>
         </div>
         <div style={{ display:'flex', alignItems:'center', gap:10 }}>
@@ -86,7 +98,7 @@ export default function LandingPage() {
         <div style={{ animation:'fadeInUp 0.6s both', position:'relative', zIndex:1 }}>
           <div style={{ display:'inline-flex', alignItems:'center', gap:8, padding:'6px 16px', borderRadius:'var(--r-full)', background:'var(--brand-dim)', border:'1px solid rgba(99,102,241,0.3)', marginBottom:24 }}>
             <span style={{ fontSize:14 }}>🚀</span>
-            <span style={{ fontSize:12, fontWeight:700, color:'var(--brand-light)', letterSpacing:'0.04em' }}>Nigeria's Most Advanced CBT Platform</span>
+            <span style={{ fontSize:12, fontWeight:700, color:'var(--brand-light)', letterSpacing:'0.04em' }}>Nigeria's AI-Powered Examination Ecosystem</span>
           </div>
 
           <h1 style={{ fontSize:'clamp(2.2rem,6vw,4rem)', fontWeight:900, letterSpacing:'-0.04em', lineHeight:1.05, marginBottom:20, maxWidth:700 }}>
@@ -151,11 +163,35 @@ export default function LandingPage() {
 
     
 
+      {/* ── PRODUCTS (master brand) ── */}
+      <section style={{ padding:'80px 24px', background:'var(--bg-surface)' }}>
+        <div style={{ maxWidth:1100, margin:'0 auto' }}>
+          <div style={{ textAlign:'center', marginBottom:48 }}>
+            <span style={{ fontSize:12, fontWeight:700, color:'var(--brand-light)', letterSpacing:'0.08em', textTransform:'uppercase' }}>The Examora Ecosystem</span>
+            <h2 style={{ fontSize:'clamp(1.6rem,4vw,2.4rem)', marginTop:10, marginBottom:12 }}>One platform, nine products</h2>
+            <p style={{ color:'var(--text-muted)', fontSize:15, maxWidth:560, margin:'0 auto' }}>
+              Examora isn't just an app — it's a complete examination ecosystem built for how Nigerian students actually study, practice, and prepare.
+            </p>
+          </div>
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(260px,1fr))', gap:16 }}>
+            {PRODUCTS.map((p, i) => (
+              <div key={p.name} className="card" style={{ animation:`fadeInUp 0.4s ${i*0.05}s both`, textAlign:'left' }}>
+                <div style={{ fontSize:28, marginBottom:12 }}>{p.icon}</div>
+                <h3 style={{ fontSize:'1rem', marginBottom:6 }}>{p.name}</h3>
+                <p style={{ fontSize:13, color:'var(--text-muted)', lineHeight:1.6 }}>{p.desc}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+    
+
       {/* ── FEATURES ── */}
       <section style={{ padding:'80px 24px' }}>
         <div style={{ maxWidth:1100, margin:'0 auto' }}>
           <div style={{ textAlign:'center', marginBottom:48 }}>
-            <h2 style={{ fontSize:'clamp(1.6rem,4vw,2.4rem)', marginBottom:12 }}>Why ExamOS?</h2>
+            <h2 style={{ fontSize:'clamp(1.6rem,4vw,2.4rem)', marginBottom:12 }}>Why Examora?</h2>
             <p style={{ color:'var(--text-muted)', fontSize:15 }}>Built for Nigerian students, by Nigerian educators</p>
           </div>
           <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(300px,1fr))', gap:16 }}>
@@ -176,7 +212,7 @@ export default function LandingPage() {
         <div style={{ position:'relative', zIndex:1 }}>
           <h2 style={{ fontSize:'clamp(1.6rem,4vw,2.6rem)', color:'#fff', marginBottom:12 }}>Ready to Ace Your Exams?</h2>
           <p style={{ color:'rgba(255,255,255,0.75)', fontSize:15, marginBottom:32, maxWidth:500, margin:'0 auto 32px' }}>
-            Join thousands of Nigerian students already using ExamOS to prepare smarter and score higher.
+            Join thousands of Nigerian students already using Examora to prepare smarter and score higher.
           </p>
           <div style={{ display:'flex', gap:12, justifyContent:'center', flexWrap:'wrap' }}>
             <button onClick={() => navigate('/study')} style={{ padding:'14px 32px', borderRadius:'var(--r-lg)', background:'#fff', color:'var(--brand-dark)', border:'none', fontWeight:800, fontSize:15, cursor:'pointer', fontFamily:'var(--font-body)', transition:'all 0.15s' }}
@@ -196,8 +232,11 @@ export default function LandingPage() {
       <footer style={{ padding:'32px 24px', textAlign:'center', borderTop:'1px solid var(--border)', background:'var(--bg-surface)' }}>
         <div style={{ display:'flex', alignItems:'center', justifyContent:'center', gap:10, marginBottom:12 }}>
           <div style={{ width:28, height:28, borderRadius:8, background:'linear-gradient(135deg,#4F46E5,#818CF8)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:13, fontWeight:900, color:'#fff' }}>E</div>
-          <span style={{ fontFamily:'var(--font-display)', fontWeight:800, fontSize:15 }}>ExamOS 2.0</span>
+          <span style={{ fontFamily:'var(--font-display)', fontWeight:800, fontSize:15 }}>Examora</span>
         </div>
+        <p style={{ fontSize:12, color:'var(--text-muted)', marginBottom:4 }}>
+          Nigeria's AI-powered examination ecosystem
+        </p>
         <p style={{ fontSize:12, color:'var(--text-muted)' }}>
           Built with ❤️ for Nigerian students · Ogotech Technologies · 2026
         </p>

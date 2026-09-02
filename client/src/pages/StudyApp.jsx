@@ -138,7 +138,7 @@ function SetupScreen({ onStart }) {
         <div style={{ display:'flex', alignItems:'center', gap:12 }}>
           <div style={{ width:36, height:36, borderRadius:8, background:'linear-gradient(135deg,#6366F1,#818CF8)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:18, fontWeight:900, color:'#fff' }}>E</div>
           <div>
-            <div style={{ color:'#fff', fontWeight:800, fontSize:16 }}>ExamOS Practice</div>
+            <div style={{ color:'#fff', fontWeight:800, fontSize:16 }}>Examora CBT</div>
             <div style={{ color:'rgba(255,255,255,0.6)', fontSize:11 }}>JAMB · WAEC · NECO · POST-UTME</div>
           </div>
         </div>

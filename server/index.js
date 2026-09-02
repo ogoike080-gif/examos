@@ -268,7 +268,7 @@ async function start() {
       // Show all network IPs on startup
       const os = require('os');
       const nets = os.networkInterfaces();
-      console.log(`🚀 ExamOS Server running on port ${PORT}`);
+      console.log(`🚀 Examora Server running on port ${PORT}`);
       console.log(`📡 Socket.io ready`);
       console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
       console.log(`\n📌 Student access URLs (share with students):`);

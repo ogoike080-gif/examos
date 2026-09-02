@@ -68,7 +68,7 @@ export default function AdminLayout() {
               boxShadow:'0 2px 12px var(--brand-glow)',
             }}>E</div>
             <div>
-              <div style={{ fontFamily:'var(--font-display)', fontSize:15, fontWeight:800, letterSpacing:'-0.02em', lineHeight:1 }}>ExamOS</div>
+              <div style={{ fontFamily:'var(--font-display)', fontSize:15, fontWeight:800, letterSpacing:'-0.02em', lineHeight:1 }}>Examora</div>
               <div style={{ fontSize:10, color:'var(--text-muted)', fontWeight:500, marginTop:2 }}>2.0 Admin</div>
             </div>
           </div>
@@ -231,7 +231,7 @@ export default function AdminLayout() {
 
           {/* Breadcrumb / page title */}
           <div className="desktop-only" style={{ fontSize:13, color:'var(--text-muted)', display:'flex', alignItems:'center', gap:6 }}>
-            <span style={{ color:'var(--brand-light)', fontWeight:600 }}>ExamOS</span>
+            <span style={{ color:'var(--brand-light)', fontWeight:600 }}>Examora</span>
             <span>/</span>
             <span style={{ color:'var(--text-secondary)' }}>
               {NAV.find(n => n.end ? location.pathname === n.to : location.pathname.startsWith(n.to))?.label || 'Admin'}
@@ -241,7 +241,7 @@ export default function AdminLayout() {
           {/* Mobile logo */}
           <div className="mobile-only" style={{ display:'flex', alignItems:'center', gap:8 }}>
             <div style={{ width:26, height:26, borderRadius:8, background:'linear-gradient(135deg,var(--brand-dark),var(--brand-light))', display:'flex', alignItems:'center', justifyContent:'center', fontSize:13, fontWeight:900, color:'#fff' }}>E</div>
-            <span style={{ fontFamily:'var(--font-display)', fontSize:15, fontWeight:800 }}>ExamOS</span>
+            <span style={{ fontFamily:'var(--font-display)', fontSize:15, fontWeight:800 }}>Examora</span>
           </div>
 
           <div style={{ display:'flex', alignItems:'center', gap:12 }}>

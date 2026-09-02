@@ -1,4 +1,4 @@
-// ExamOS 2.0 Service Worker — Offline Support + Caching
+// Examora Service Worker — Offline Support + Caching
 const CACHE_VERSION = 'examos-v2.0';
 const STATIC_CACHE  = `${CACHE_VERSION}-static`;
 const API_CACHE     = `${CACHE_VERSION}-api`;
@@ -118,7 +118,7 @@ function offlinePage() {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ExamOS — Offline</title>
+  <title>Examora — Offline</title>
   <style>
     * { margin:0; padding:0; box-sizing:border-box; }
     body { background:#0A0A0F; color:#F1F1F5; font-family:'Inter',sans-serif;
@@ -142,7 +142,7 @@ function offlinePage() {
     <div class="icon">📡</div>
     <div class="logo">E</div>
     <h1>You're Offline</h1>
-    <p>ExamOS needs an internet connection. Please check your network and try again.</p>
+    <p>Examora needs an internet connection. Please check your network and try again.</p>
     <button onclick="window.location.reload()">Retry Connection</button>
   </div>
 </body>
@@ -155,7 +155,7 @@ self.addEventListener('push', event => {
   if (!event.data) return;
   const data = event.data.json();
   event.waitUntil(
-    self.registration.showNotification(data.title || 'ExamOS', {
+    self.registration.showNotification(data.title || 'Examora', {
       body: data.body || '',
       icon: '/icons/icon-192.png',
       badge: '/icons/badge-72.png',

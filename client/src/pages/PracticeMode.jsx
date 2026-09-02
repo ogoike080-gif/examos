@@ -139,7 +139,7 @@ function SetupScreen({ onStart }) {
       <header style={{ height:56, display:'flex', alignItems:'center', justifyContent:'space-between', padding:'0 24px', background:'var(--bg-glass)', backdropFilter:'blur(20px)', WebkitBackdropFilter:'blur(20px)', borderBottom:'1px solid var(--border)', position:'sticky', top:0, zIndex:50 }}>
         <div style={{ display:'flex', alignItems:'center', gap:10 }}>
           <div style={{ width:30, height:30, borderRadius:9, background:'linear-gradient(135deg,var(--brand-dark),var(--brand-light))', display:'flex', alignItems:'center', justifyContent:'center', fontSize:15, fontWeight:900, color:'#fff' }}>E</div>
-          <span style={{ fontFamily:'var(--font-display)', fontSize:15, fontWeight:800 }}>ExamOS</span>
+          <span style={{ fontFamily:'var(--font-display)', fontSize:15, fontWeight:800 }}>Examora</span>
           <span style={{ fontSize:11, padding:'2px 8px', borderRadius:'var(--r-full)', background:'var(--success-dim)', color:'var(--success)', fontWeight:700 }}>Practice Mode</span>
         </div>
         <ThemeToggle size="sm" />

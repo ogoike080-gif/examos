@@ -1,7 +1,7 @@
 {
   "name": "examos-2026",
   "version": "1.0.0",
-  "description": "ExamOS 2026 — AI-Powered CBT Platform",
+  "description": "Examora — Nigeria's AI-Powered Examination Ecosystem",
   "private": true,
   "scripts": {
     "start": "npm install --omit=dev && node server/index.js",
