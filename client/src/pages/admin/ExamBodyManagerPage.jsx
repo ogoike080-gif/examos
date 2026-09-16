@@ -53,7 +53,18 @@ export default function ExamBodyManagerPage() {
   const addExamBody = async () => {
     const name = window.prompt('Exam body name (e.g. WAEC):'); if (!name) return;
     const code = window.prompt('Short code (e.g. WAEC):', name.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 10)); if (!code) return;
-    try { await syllabusAPI.createExamBody({ name, code }); toast.success('Exam body added'); loadExamBodies(); }
+    const priceInput = window.prompt('Price candidates pay to unlock this exam body (\u20a6), once their 5 free questions run out:', '500');
+    const price = priceInput ? Number(priceInput) : 500;
+    try { await syllabusAPI.createExamBody({ name, code, price }); toast.success('Exam body added'); loadExamBodies(); }
+    catch (err) { toast.error(err.response?.data?.error || 'Failed'); }
+  };
+  const editExamBodyPrice = async (body, e) => {
+    e.stopPropagation();
+    const priceInput = window.prompt(`Price for ${body.name} (\u20a6):`, String(body.price ?? 500));
+    if (priceInput == null) return;
+    const price = Number(priceInput);
+    if (!Number.isFinite(price) || price < 0) return toast.error('Enter a valid amount');
+    try { await syllabusAPI.updateExamBody(body.id, { price }); toast.success(`${body.name} is now \u20a6${price.toLocaleString()}`); loadExamBodies(); }
     catch (err) { toast.error(err.response?.data?.error || 'Failed'); }
   };
   const addExamination = async () => {
@@ -137,6 +148,13 @@ export default function ExamBodyManagerPage() {
           {examBodies.map(b => (
             <div key={b.id} style={itemS(selectedBody?.id === b.id)} onClick={() => { setSelectedBody(b); setSelectedExam(null); setSelectedSubject(null); setSelectedTopic(null); }}>
               <span>{b.name}</span>
+              <button
+                onClick={e => editExamBodyPrice(b, e)}
+                title="Click to change the price candidates pay to unlock this exam body"
+                style={{ background:'var(--bg-raised)', border:'1px solid var(--border)', borderRadius:6, padding:'2px 7px', fontSize:11, fontWeight:700, color:'var(--text-secondary)', cursor:'pointer', marginRight:6 }}
+              >
+                ₦{Number(b.price ?? 500).toLocaleString()}
+              </button>
               <button style={delBtnS} onClick={e => { e.stopPropagation(); del(syllabusAPI.deleteExamBody, b.id, loadExamBodies); }}>✕</button>
             </div>
           ))}

@@ -366,7 +366,7 @@ function SetupScreen({ onStart }) {
 // placeholder-email handling as the full billing page (PaystackPayment.jsx)
 // so a candidate who logged in by name only (no real email on file) still
 // gets prompted for one here, inline, instead of hitting a Paystack error.
-export function FreeTrialPaywall({ onDismiss }) {
+export function FreeTrialPaywall({ onDismiss, examBody }) {
   const { user } = useAuthStore();
   const { pay } = usePaystack();
   // Two very different visitors land here now that "Practice Free" doesn't
@@ -388,6 +388,26 @@ export function FreeTrialPaywall({ onDismiss }) {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
+  // The price varies by which exam body the candidate was practicing when
+  // they hit the free-question limit — a WAEC/NECO paywall is cheaper than a
+  // JAMB one, which is cheaper than a university course (see the price
+  // column on exam_bodies, editable from Exam Body Manager). Fetched fresh
+  // here rather than threaded down from every call site, so this one
+  // component is the only place that needs to know how to look it up.
+  // Defaults to ₦500 (the original flat price) until the fetch resolves, or
+  // if examBody is missing/unrecognized/CUSTOM (general practice, not tied
+  // to one exam body) — same fallback the server uses if this ever drifts.
+  const [price, setPrice] = useState(500);
+  useEffect(() => {
+    if (!examBody || examBody === 'CUSTOM') { setPrice(500); return; }
+    syllabusAPI.examBodies()
+      .then(r => {
+        const match = (r.data.exam_bodies || []).find(b => b.code === examBody);
+        setPrice(match?.price != null ? Number(match.price) : 500);
+      })
+      .catch(() => setPrice(500));
+  }, [examBody]);
+
   const handleSubscribe = async () => {
     if (isAnonymous && !name.trim()) { setError('Enter your name first'); return; }
     if (!isRealEmail(email)) { setError('Enter a valid email — Paystack sends your receipt there'); return; }
@@ -396,8 +416,8 @@ export function FreeTrialPaywall({ onDismiss }) {
       await pay({
         email,
         full_name: isAnonymous ? name.trim() : undefined,
-        amount: 500,
-        metadata: { plan_id: 'student', plan_name: 'Student' },
+        amount: price,
+        metadata: { plan_id: 'student', plan_name: 'Student', exam_body: examBody && examBody !== 'CUSTOM' ? examBody : undefined },
         onSuccess: (data) => {
           // Confirmed — if this was an anonymous checkout, the account was
           // just created server-side and new_session logs them straight in
@@ -465,7 +485,7 @@ export function FreeTrialPaywall({ onDismiss }) {
 
         <button className="btn btn-primary" style={{ width: '100%', justifyContent: 'center', marginBottom: 10 }}
           onClick={handleSubscribe} disabled={loading}>
-          {loading ? 'Opening checkout…' : 'Subscribe — ₦500/month'}
+          {loading ? 'Opening checkout…' : `Subscribe — ₦${price.toLocaleString()}/month`}
         </button>
         <button onClick={onDismiss} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', fontSize: 13, cursor: 'pointer', padding: 8 }}>
           Not right now
@@ -628,7 +648,7 @@ function PracticeEngine({ config, onFinish }) {
   if (!loading && questions.length === 0 && showPaywall) {
     return (
       <div style={{ minHeight:'100dvh', background:'var(--bg-base)' }}>
-        <FreeTrialPaywall onDismiss={() => window.history.back()} />
+        <FreeTrialPaywall onDismiss={() => window.history.back()} examBody={config.examType} />
       </div>
     );
   }
@@ -783,7 +803,7 @@ function PracticeEngine({ config, onFinish }) {
 
       {showCalc && <Calculator onClose={() => setShowCalc(false)} />}
       {showPaywall && (
-        <FreeTrialPaywall onDismiss={() => setShowPaywall(false)} />
+        <FreeTrialPaywall onDismiss={() => setShowPaywall(false)} examBody={config.examType} />
       )}
     </div>
   );

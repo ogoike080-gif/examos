@@ -39,12 +39,12 @@ router.get('/exam-bodies', optionalAuthenticate, async (req, res) => {
 router.post('/exam-bodies', authenticate, authorize(...ADMIN_ROLES), async (req, res) => {
   try {
     const db = getDB();
-    const { name, code, description, display_order } = req.body;
+    const { name, code, description, display_order, price } = req.body;
     if (!name?.trim() || !code?.trim()) return res.status(400).json({ error: 'name and code are required' });
     const id = uuidv4();
     await db.execute(
-      'INSERT INTO exam_bodies (id, name, code, description, display_order) VALUES (?, ?, ?, ?, ?)',
-      [id, name.trim(), code.trim().toUpperCase(), description || null, display_order || 0]
+      'INSERT INTO exam_bodies (id, name, code, description, display_order, price) VALUES (?, ?, ?, ?, ?, ?)',
+      [id, name.trim(), code.trim().toUpperCase(), description || null, display_order || 0, price != null ? Number(price) : 500]
     );
     res.status(201).json({ id, message: 'Exam body created' });
   } catch (err) {
@@ -56,10 +56,10 @@ router.post('/exam-bodies', authenticate, authorize(...ADMIN_ROLES), async (req,
 router.put('/exam-bodies/:id', authenticate, authorize(...ADMIN_ROLES), async (req, res) => {
   try {
     const db = getDB();
-    const { name, description, is_active, display_order } = req.body;
+    const { name, description, is_active, display_order, price } = req.body;
     await db.execute(
-      'UPDATE exam_bodies SET name=COALESCE(?,name), description=?, is_active=COALESCE(?,is_active), display_order=COALESCE(?,display_order) WHERE id=?',
-      [name || null, description ?? null, is_active ?? null, display_order ?? null, req.params.id]
+      'UPDATE exam_bodies SET name=COALESCE(?,name), description=?, is_active=COALESCE(?,is_active), display_order=COALESCE(?,display_order), price=COALESCE(?,price) WHERE id=?',
+      [name || null, description ?? null, is_active ?? null, display_order ?? null, price != null ? Number(price) : null, req.params.id]
     );
     res.json({ message: 'Exam body updated' });
   } catch (err) { res.status(500).json({ error: err.message }); }

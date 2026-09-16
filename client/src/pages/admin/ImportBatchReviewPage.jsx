@@ -262,6 +262,27 @@ export default function ImportBatchReviewPage() {
     }
   };
 
+  const [generatingMore, setGeneratingMore] = useState(false);
+
+  // "Not complete" is defined by expected_count (set at import time — see
+  // ImportBatchesPage.jsx) vs. how many actually got extracted/staged so
+  // far. Only shown when the admin actually gave an expected_count; there's
+  // no way to know a paper is "incomplete" otherwise.
+  const missingCount = batch?.expected_count ? Math.max(0, batch.expected_count - batch.extracted_count) : 0;
+
+  const generateMore = async () => {
+    setGeneratingMore(true);
+    try {
+      const res = await importBatchAPI.generateMore(id, missingCount || undefined);
+      toast.success(res.data.message || 'Questions generated');
+      load();
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Could not generate more questions');
+    } finally {
+      setGeneratingMore(false);
+    }
+  };
+
   const publish = async () => {
     setPublishing(true);
     try {
@@ -308,6 +329,20 @@ export default function ImportBatchReviewPage() {
           </p>
         </div>
         <div style={{ display: 'flex', gap: 10 }}>
+          {missingCount > 0 && (
+            <button
+              onClick={generateMore}
+              disabled={generatingMore}
+              title={`This paper only has ${batch.extracted_count} of the ${batch.expected_count} expected questions — generate the missing ${missingCount} with AI (they'll need review like any other question)`}
+              style={{
+                padding: '10px 16px', borderRadius: 'var(--r-lg)', border: '1.5px solid var(--border-md)',
+                background: generatingMore ? 'var(--bg-raised)' : 'var(--bg-surface)', color: 'var(--text-secondary)',
+                fontWeight: 700, fontSize: 14, cursor: generatingMore ? 'not-allowed' : 'pointer',
+              }}
+            >
+              {generatingMore ? 'Generating…' : `➕ Add ${missingCount} Missing Question${missingCount !== 1 ? 's' : ''} (AI)`}
+            </button>
+          )}
           <button
             onClick={solveMissingAnswers}
             disabled={solvingMissing}

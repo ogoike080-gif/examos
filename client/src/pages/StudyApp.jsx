@@ -793,7 +793,7 @@ function ExamScreen({ config, onFinish }) {
   if (questions.length === 0 && showPaywall) {
     return (
       <div style={{ minHeight:'100dvh', background: isMobile ? '#0F172A' : '#F0F4F8' }}>
-        <FreeTrialPaywall onDismiss={() => window.history.back()} />
+        <FreeTrialPaywall onDismiss={() => window.history.back()} examBody={config.examType} />
       </div>
     );
   }
@@ -830,7 +830,7 @@ function ExamScreen({ config, onFinish }) {
           setRevealed={setRevealed} onFinish={onFinish} submittedRef={submittedRef}
           paletteStatus={paletteStatus}
         />
-        {showPaywall && <FreeTrialPaywall onDismiss={() => setShowPaywall(false)} />}
+        {showPaywall && <FreeTrialPaywall onDismiss={() => setShowPaywall(false)} examBody={config.examType} />}
       </>
     );
   }
@@ -1013,7 +1013,7 @@ function ExamScreen({ config, onFinish }) {
       </div>
 
       {showCalc && <SimpleCalc onClose={() => setShowCalc(false)} />}
-      {showPaywall && <FreeTrialPaywall onDismiss={() => setShowPaywall(false)} />}
+      {showPaywall && <FreeTrialPaywall onDismiss={() => setShowPaywall(false)} examBody={config.examType} />}
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
     </div>
   );

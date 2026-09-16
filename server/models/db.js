@@ -499,22 +499,43 @@ async function createSchema() {
   const [[{ cnt }]] = await db.execute('SELECT COUNT(*) as cnt FROM exam_bodies');
   if (cnt === 0) {
     const defaults = [
-      ['WAEC', 'West African Examinations Council'],
-      ['JAMB', 'Joint Admissions and Matriculation Board'],
-      ['NECO', 'National Examinations Council'],
-      ['NABTEB', 'National Business and Technical Examinations Board'],
-      ['BECE', 'Basic Education Certificate Examination'],
-      ['POST-UTME', 'Post-UTME'],
-      ['GENERAL', 'General / Uncategorized'],
+      ['WAEC', 'West African Examinations Council', 500],
+      ['JAMB', 'Joint Admissions and Matriculation Board', 1000],
+      ['NECO', 'National Examinations Council', 500],
+      ['NABTEB', 'National Business and Technical Examinations Board', 500],
+      ['BECE', 'Basic Education Certificate Examination', 500],
+      ['POST-UTME', 'Post-UTME', 500],
+      ['GENERAL', 'General / Uncategorized', 500],
     ];
     for (let i = 0; i < defaults.length; i++) {
-      const [code, name] = defaults[i];
+      const [code, name, price] = defaults[i];
       await db.execute(
-        'INSERT INTO exam_bodies (id, name, code, display_order) VALUES (?, ?, ?, ?)',
-        [uuidv4(), name, code, i]
+        'INSERT INTO exam_bodies (id, name, code, display_order, price) VALUES (?, ?, ?, ?, ?)',
+        [uuidv4(), name, code, i, price]
       );
     }
   }
+
+  // Lets a candidate be charged a different amount depending on which exam
+  // body they're unlocking (a WAEC/NECO paywall vs. a JAMB one vs. a
+  // university course one) instead of one flat price for everything — see
+  // routes/payments.js and PracticeMode.jsx's FreeTrialPaywall for where
+  // this actually gets charged. Admin-editable per exam body from Exam Body
+  // Manager, so a newly-added university course can be priced individually
+  // too, not just the two exam bodies called out here.
+  try {
+    await db.execute(`ALTER TABLE exam_bodies ADD COLUMN price DECIMAL(10,2) NOT NULL DEFAULT 500`);
+    console.log('✅ exam_bodies.price column added');
+  } catch (e) { /* already exists — safe to ignore */ }
+  // One-time backfill for a database that already had JAMB/UNIVERSITY rows
+  // before the price column existed (so they got the DEFAULT 500 from the
+  // ALTER above, not the correct 1000/1500). Only touches rows still sitting
+  // at that just-added default — never overwrites a price an admin has
+  // since set deliberately via Exam Body Manager.
+  try {
+    await db.execute(`UPDATE exam_bodies SET price=1000 WHERE code='JAMB' AND price=500`);
+    await db.execute(`UPDATE exam_bodies SET price=1500 WHERE code='UNIVERSITY' AND price=500`);
+  } catch (e) { /* column may not exist yet on a very first run — the ALTER above already ran by this point though, so this is just extra safety */ }
 
   await db.execute(`
     CREATE TABLE IF NOT EXISTS examinations (

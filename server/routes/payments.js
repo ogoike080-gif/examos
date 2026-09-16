@@ -18,11 +18,34 @@ const IS_PROD = process.env.NODE_ENV === 'production';
 // student is charged (and the plan they get activated into) can't be
 // tampered with by editing the request — the client-sent amount/plan_id
 // were previously trusted as-is.
+//
+// 'student' no longer has a single fixed price here — see getStudentPrice
+// below. It varies per exam_body (WAEC/NECO ₦500, JAMB ₦1000, a university
+// course ₦1500, or whatever an admin has set in Exam Body Manager), since
+// this plan is really "unlock this specific exam", not one flat
+// subscription. 'free' and 'school' are unaffected — 'school' is still a
+// flat bulk, unlock-everything tier for a whole institution, unrelated to
+// any single exam body.
 const PLANS = {
   free:    { name: 'Free',    price: 0 },
-  student: { name: 'Student', price: 500 },
+  student: { name: 'Student', price: null }, // resolved per-request via getStudentPrice
   school:  { name: 'School',  price: 5000 },
 };
+
+// Looks up what the 'student' plan should cost for a given exam_body — the
+// whole point of this feature (see server/models/db.js exam_bodies.price).
+// Falls back to ₦500 (the original flat price) for a missing/unrecognized
+// exam_body, so an old client that doesn't send one yet, or a request for
+// an exam_body that's been deleted, doesn't just break checkout outright.
+async function getStudentPrice(db, examBody) {
+  if (!examBody) return 500;
+  try {
+    const [rows] = await db.execute('SELECT price FROM exam_bodies WHERE code=?', [String(examBody).toUpperCase()]);
+    return rows[0] ? Number(rows[0].price) : 500;
+  } catch {
+    return 500;
+  }
+}
 
 // ── Ensure payments table ─────────────────────────────────────
 async function ensurePaymentsTables(db) {
@@ -51,6 +74,12 @@ async function ensurePaymentsTables(db) {
     try { await db.execute(`ALTER TABLE payments MODIFY user_id VARCHAR(36) NULL`); } catch (e) {}
     try { await db.execute(`ALTER TABLE payments ADD COLUMN pending_full_name VARCHAR(255) NULL`); } catch (e) {}
     try { await db.execute(`ALTER TABLE payments ADD COLUMN pending_email VARCHAR(255) NULL`); } catch (e) {}
+    // Which exam body the 'student' plan purchase was for (WAEC, JAMB, a
+    // university course, etc.) — recorded at /initialize time so /verify
+    // and the webhook re-validate the amount against the SAME exam_body
+    // rather than trusting anything fresh from the client at that point,
+    // and so payment history/reporting can show what was actually bought.
+    try { await db.execute(`ALTER TABLE payments ADD COLUMN exam_body VARCHAR(20) NULL`); } catch (e) {}
   }
   await db.execute(`
     CREATE TABLE IF NOT EXISTS user_subscriptions (
@@ -146,7 +175,9 @@ router.post('/initialize', optionalAuthenticate, async (req, res) => {
     const planId = metadata?.plan_id;
     const plan = PLANS[planId];
     if (!plan) return res.status(400).json({ error: `Unknown plan_id: ${planId}` });
-    if (Number(amount) !== plan.price) {
+    const examBody = planId === 'student' ? (metadata?.exam_body || null) : null;
+    const expectedPrice = planId === 'student' ? await getStudentPrice(db, examBody) : plan.price;
+    if (Number(amount) !== expectedPrice) {
       return res.status(400).json({ error: `Amount does not match the ${plan.name} plan price` });
     }
 
@@ -157,9 +188,9 @@ router.post('/initialize', optionalAuthenticate, async (req, res) => {
     const reference = `EXAMOS-${Date.now()}-${uuidv4().slice(0,8).toUpperCase()}`;
 
     await db.execute(
-      `INSERT INTO payments (id, user_id, pending_full_name, pending_email, reference, amount, plan_id, plan_name, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
-      [uuidv4(), req.user ? req.user.id : null, req.user ? null : full_name.trim(), req.user ? null : email, reference, amount, planId, plan.name]
+      `INSERT INTO payments (id, user_id, pending_full_name, pending_email, reference, amount, plan_id, plan_name, exam_body, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
+      [uuidv4(), req.user ? req.user.id : null, req.user ? null : full_name.trim(), req.user ? null : email, reference, amount, planId, plan.name, examBody]
     );
 
     res.json({ reference, public_key: PAYSTACK_PUBLIC });
@@ -201,7 +232,8 @@ router.post('/verify', optionalAuthenticate, async (req, res) => {
         // Confirm the amount actually paid (Paystack returns kobo) matches
         // what this plan costs — "success" only means the transaction it
         // was given went through, not that it was for the right amount.
-        const expectedKobo = (PLANS[payment.plan_id]?.price ?? -1) * 100;
+        const expectedPrice = payment.plan_id === 'student' ? await getStudentPrice(db, payment.exam_body) : (PLANS[payment.plan_id]?.price ?? -1);
+        const expectedKobo = expectedPrice * 100;
         if (verified && paystackData.amount !== expectedKobo) {
           console.error(`payment amount mismatch: reference=${reference} paid=${paystackData.amount} expected=${expectedKobo}`);
           verified = false;
@@ -283,7 +315,8 @@ async function paystackWebhookHandler(req, res) {
       return;
     }
 
-    const expectedKobo = (PLANS[payment.plan_id]?.price ?? -1) * 100;
+    const expectedPrice = payment.plan_id === 'student' ? await getStudentPrice(db, payment.exam_body) : (PLANS[payment.plan_id]?.price ?? -1);
+    const expectedKobo = expectedPrice * 100;
     if (data.amount !== expectedKobo) {
       console.error(`Paystack webhook amount mismatch: reference=${data.reference} paid=${data.amount} expected=${expectedKobo}`);
       return;

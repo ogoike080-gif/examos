@@ -26,7 +26,7 @@ const AdmZip = require('adm-zip');
 const { v4: uuidv4 } = require('uuid');
 const { getDB } = require('../models/db');
 const { authenticate, authorize } = require('../middleware/auth');
-const { extractQuestionsFromImage, reverifyLowConfidenceQuestion, solveObjectiveQuestion, reconstructDiagramSVG, qualityCheckDiagram, parseGeminiError } = require('../ai/questionGenerator');
+const { extractQuestionsFromImage, reverifyLowConfidenceQuestion, solveObjectiveQuestion, reconstructDiagramSVG, qualityCheckDiagram, parseGeminiError, generateQuestionsWithAI } = require('../ai/questionGenerator');
 const { computeConfidence } = require('../services/confidenceScoring');
 const { hasRealOptionContent } = require('../utils/answerQuality');
 
@@ -614,6 +614,87 @@ router.get('/:id', authenticate, authorize('superadmin', 'admin', 'examiner'), a
     }
     res.json({ batch });
   } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// POST /api/import/batches/:id/generate-more — fills a batch out to its
+// expected_count using freshly AI-GENERATED questions (not extracted from
+// any page image — there's nothing left to extract from once the source
+// photos are exhausted). Exists for the common case where the scanned paper
+// itself was incomplete (missing pages, a torn/illegible page that had to be
+// skipped) but the admin still wants a full set for that subject/year.
+//
+// Generated rows go through the exact same staging + review pipeline as
+// extracted ones — nothing here skips human review before publish — but are
+// tagged in review_notes so a reviewer knows a given question wasn't in the
+// original paper, in case that matters for their records.
+router.post('/:id/generate-more', authenticate, authorize('superadmin', 'admin', 'examiner'), async (req, res) => {
+  try {
+    const db = getDB();
+    const [rows] = await db.execute(
+      `SELECT ib.*, s.name as subject_name FROM import_batches ib
+       LEFT JOIN subjects s ON ib.subject_id = s.id WHERE ib.id=?`, [req.params.id]
+    );
+    const batch = rows[0];
+    if (!batch) return res.status(404).json({ error: 'Batch not found' });
+    if (!batch.subject_name) return res.status(400).json({ error: 'This batch has no subject set — set one (Edit) before generating questions' });
+
+    // How many to add: explicit count in the request wins; otherwise fill
+    // the gap to expected_count. If neither is available there's nothing to
+    // compute a target from.
+    let count = req.body.count ? Number(req.body.count) : null;
+    if (!count) {
+      if (!batch.expected_count) {
+        return res.status(400).json({ error: 'No count given and this batch has no expected_count set — specify how many questions to generate' });
+      }
+      count = batch.expected_count - batch.extracted_count;
+      if (count <= 0) return res.status(400).json({ error: 'This batch already has at least as many questions as expected_count — nothing to add' });
+    }
+    if (count > 30) return res.status(400).json({ error: 'Generate at most 30 at a time' });
+
+    const [[{ maxNum }]] = await db.execute(
+      `SELECT MAX(question_number) as maxNum FROM staged_questions WHERE import_batch_id=?`,
+      [req.params.id]
+    );
+    let nextNumber = (maxNum || 0) + 1;
+
+    const generated = await generateQuestionsWithAI({
+      subject: batch.subject_name,
+      topic: `mixed topics across the standard ${batch.exam_body} syllabus, appropriate for a ${batch.year} past-question paper`,
+      difficulty: 'medium',
+      count,
+      exam_type: batch.exam_body,
+    });
+
+    let inserted = 0;
+    for (const q of generated) {
+      await db.execute(
+        `INSERT INTO staged_questions
+         (id, import_batch_id, subject_id, exam_body, year, paper_type, question_number,
+          question_text, question_type, options, correct_answers, explanation,
+          media_url, source_photo, confidence_score, confidence_label, review_status, review_notes,
+          answer_candidates)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?)`,
+        [
+          uuidv4(), req.params.id, batch.subject_id, batch.exam_body, batch.year,
+          batch.paper_type, nextNumber++,
+          q.question_text, q.question_type || 'mcq',
+          JSON.stringify(q.options || []), JSON.stringify(q.correct_answers || []),
+          q.explanation || null,
+          80, 'medium',
+          'needs_review', // AI-generated-from-scratch still gets a human look before publish, same as any low/medium-confidence extracted row
+          'AI-generated to complete the set — not from the original scanned paper',
+          JSON.stringify([]),
+        ]
+      );
+      inserted++;
+    }
+
+    await recomputeBatchCounts(db, req.params.id);
+    res.json({ message: `Generated ${inserted} question(s) — sitting in Needs Review like any other staged question`, inserted });
+  } catch (err) {
+    console.error('POST /import/batches/:id/generate-more error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // GET /api/import/batches/:id/staged — review-screen data, optionally filtered by status
