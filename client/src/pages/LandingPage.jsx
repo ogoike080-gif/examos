@@ -10,15 +10,15 @@ const STATS = [
 ];
 
 const PRODUCTS = [
-  { icon:'🤖', name:'Examora AI',         desc:'Your personal AI tutor.' },
-  { icon:'📚', name:'Examora Library',    desc:'WAEC, NECO, JAMB and GCE learning resources.' },
-  { icon:'📝', name:'Examora CBT',        desc:'Realistic computer-based examination simulations.' },
-  { icon:'🧠', name:'Examora Tutor',      desc:'AI explanations for difficult questions.' },
-  { icon:'📊', name:'Examora Analytics',  desc:'Performance tracking and weak-topic identification.' },
-  { icon:'🎯', name:'Examora Coach',      desc:'Personalised study plans.' },
-  { icon:'🎓', name:'Examora Admissions', desc:'JAMB score guidance, university information and admission planning.' },
-  { icon:'🏆', name:'Examora Challenge',  desc:'Competitions, leaderboards and rewards.' },
-  { icon:'👨‍👩‍👧', name:'Examora Parent', desc:'Parents can monitor their child\'s study progress.' },
+  { icon:'🤖', name:'Examaye AI',         desc:'Your personal AI tutor.' },
+  { icon:'📚', name:'Examaye Library',    desc:'WAEC, NECO, JAMB and GCE learning resources.' },
+  { icon:'📝', name:'Examaye CBT',        desc:'Realistic computer-based examination simulations.' },
+  { icon:'🧠', name:'Examaye Tutor',      desc:'AI explanations for difficult questions.' },
+  { icon:'📊', name:'Examaye Analytics',  desc:'Performance tracking and weak-topic identification.' },
+  { icon:'🎯', name:'Examaye Coach',      desc:'Personalised study plans.' },
+  { icon:'🎓', name:'Examaye Admissions', desc:'JAMB score guidance, university information and admission planning.' },
+  { icon:'🏆', name:'Examaye Challenge',  desc:'Competitions, leaderboards and rewards.' },
+  { icon:'👨‍👩‍👧', name:'Examaye Parent', desc:'Parents can monitor their child\'s study progress.' },
 ];
 
 const FEATURES = [
@@ -71,7 +71,7 @@ export default function LandingPage() {
       }}>
         <div style={{ display:'flex', alignItems:'center', gap:10 }}>
           <div style={{ width:32, height:32, borderRadius:9, background:'linear-gradient(135deg,#4F46E5,#818CF8)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:16, fontWeight:900, color:'#fff', boxShadow:'0 2px 10px rgba(99,102,241,0.4)' }}>E</div>
-          <span style={{ fontFamily:'var(--font-display)', fontSize:16, fontWeight:800, letterSpacing:'-0.02em' }}>Examora</span>
+          <span style={{ fontFamily:'var(--font-display)', fontSize:16, fontWeight:800, letterSpacing:'-0.02em' }}>Examaye</span>
           <span style={{ fontSize:10, background:'var(--brand-dim)', color:'var(--brand-light)', padding:'2px 8px', borderRadius:'var(--r-full)', fontWeight:700, letterSpacing:'0.04em' }}>2.0</span>
         </div>
         <div style={{ display:'flex', alignItems:'center', gap:10 }}>
@@ -167,10 +167,10 @@ export default function LandingPage() {
       <section style={{ padding:'80px 24px', background:'var(--bg-surface)' }}>
         <div style={{ maxWidth:1100, margin:'0 auto' }}>
           <div style={{ textAlign:'center', marginBottom:48 }}>
-            <span style={{ fontSize:12, fontWeight:700, color:'var(--brand-light)', letterSpacing:'0.08em', textTransform:'uppercase' }}>The Examora Ecosystem</span>
+            <span style={{ fontSize:12, fontWeight:700, color:'var(--brand-light)', letterSpacing:'0.08em', textTransform:'uppercase' }}>The Examaye Ecosystem</span>
             <h2 style={{ fontSize:'clamp(1.6rem,4vw,2.4rem)', marginTop:10, marginBottom:12 }}>One platform, nine products</h2>
             <p style={{ color:'var(--text-muted)', fontSize:15, maxWidth:560, margin:'0 auto' }}>
-              Examora isn't just an app — it's a complete examination ecosystem built for how Nigerian students actually study, practice, and prepare.
+              Examaye isn't just an app — it's a complete examination ecosystem built for how Nigerian students actually study, practice, and prepare.
             </p>
           </div>
           <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(260px,1fr))', gap:16 }}>
@@ -191,7 +191,7 @@ export default function LandingPage() {
       <section style={{ padding:'80px 24px' }}>
         <div style={{ maxWidth:1100, margin:'0 auto' }}>
           <div style={{ textAlign:'center', marginBottom:48 }}>
-            <h2 style={{ fontSize:'clamp(1.6rem,4vw,2.4rem)', marginBottom:12 }}>Why Examora?</h2>
+            <h2 style={{ fontSize:'clamp(1.6rem,4vw,2.4rem)', marginBottom:12 }}>Why Examaye?</h2>
             <p style={{ color:'var(--text-muted)', fontSize:15 }}>Built for Nigerian students, by Nigerian educators</p>
           </div>
           <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(300px,1fr))', gap:16 }}>
@@ -212,7 +212,7 @@ export default function LandingPage() {
         <div style={{ position:'relative', zIndex:1 }}>
           <h2 style={{ fontSize:'clamp(1.6rem,4vw,2.6rem)', color:'#fff', marginBottom:12 }}>Ready to Ace Your Exams?</h2>
           <p style={{ color:'rgba(255,255,255,0.75)', fontSize:15, marginBottom:32, maxWidth:500, margin:'0 auto 32px' }}>
-            Join thousands of Nigerian students already using Examora to prepare smarter and score higher.
+            Join thousands of Nigerian students already using Examaye to prepare smarter and score higher.
           </p>
           <div style={{ display:'flex', gap:12, justifyContent:'center', flexWrap:'wrap' }}>
             <button onClick={() => navigate('/study')} style={{ padding:'14px 32px', borderRadius:'var(--r-lg)', background:'#fff', color:'var(--brand-dark)', border:'none', fontWeight:800, fontSize:15, cursor:'pointer', fontFamily:'var(--font-body)', transition:'all 0.15s' }}
@@ -232,7 +232,7 @@ export default function LandingPage() {
       <footer style={{ padding:'32px 24px', textAlign:'center', borderTop:'1px solid var(--border)', background:'var(--bg-surface)' }}>
         <div style={{ display:'flex', alignItems:'center', justifyContent:'center', gap:10, marginBottom:12 }}>
           <div style={{ width:28, height:28, borderRadius:8, background:'linear-gradient(135deg,#4F46E5,#818CF8)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:13, fontWeight:900, color:'#fff' }}>E</div>
-          <span style={{ fontFamily:'var(--font-display)', fontWeight:800, fontSize:15 }}>Examora</span>
+          <span style={{ fontFamily:'var(--font-display)', fontWeight:800, fontSize:15 }}>Examaye</span>
         </div>
         <p style={{ fontSize:12, color:'var(--text-muted)', marginBottom:4 }}>
           Nigeria's AI-powered examination ecosystem

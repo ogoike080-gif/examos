@@ -410,7 +410,7 @@ export default function ResultSlip() {
           <div className={styles.footerCenter}>
             {settings?.result_footer || 'This result is computer-generated and valid without signature.'}
           </div>
-          <div className={styles.footerRight}>Examora</div>
+          <div className={styles.footerRight}>Examaye</div>
         </div>
 
       </div>

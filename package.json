@@ -1,7 +1,7 @@
 {
   "name": "examos-2026",
   "version": "1.0.0",
-  "description": "Examora — Nigeria's AI-Powered Examination Ecosystem",
+  "description": "Examaye — Nigeria's AI-Powered Examination Ecosystem",
   "private": true,
   "scripts": {
     "start": "npm install --omit=dev && node server/index.js",

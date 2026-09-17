@@ -263,6 +263,7 @@ export default function ImportBatchReviewPage() {
   };
 
   const [generatingMore, setGeneratingMore] = useState(false);
+  const [generateMoreProgress, setGenerateMoreProgress] = useState(null); // { done, total }
 
   // "Not complete" was originally only defined by expected_count (set at
   // import time). Now there's a floor too: every batch should have at least
@@ -276,11 +277,30 @@ export default function ImportBatchReviewPage() {
   const targetCount = Math.max(batch?.expected_count || 0, MIN_QUESTIONS);
   const missingCount = batch ? Math.max(0, targetCount - batch.extracted_count) : 0;
 
+  // The server caps a single generate-more call at 30 (routes/importBatches.js
+  // — keeps each individual AI call a reasonably fast, reliable size) so a
+  // batch missing more than that (a 26/50 paper needing 24 is fine in one
+  // shot, but a fresh batch needing 33+ isn't) needs several calls back to
+  // back. Same loop-in-chunks shape as runAnswerFix/runBackfill in
+  // QuestionBankPage.jsx, just chunked by a fixed size instead of "until the
+  // server says stop".
+  const GENERATE_CHUNK = 30;
   const generateMore = async () => {
     setGeneratingMore(true);
+    let remaining = missingCount;
+    let done = 0;
+    setGenerateMoreProgress({ done, total: missingCount });
     try {
-      const res = await importBatchAPI.generateMore(id, missingCount || undefined);
-      toast.success(res.data.message || 'Questions generated');
+      while (remaining > 0) {
+        const chunk = Math.min(remaining, GENERATE_CHUNK);
+        const res = await importBatchAPI.generateMore(id, chunk);
+        const inserted = res.data.inserted ?? chunk;
+        done += inserted;
+        remaining -= chunk;
+        setGenerateMoreProgress({ done, total: missingCount });
+        if (!inserted) break; // nothing came back this round — stop rather than loop forever on a silent failure
+      }
+      toast.success(`Generated ${done} question(s)`);
       load();
     } catch (err) {
       toast.error(err.response?.data?.error || 'Could not generate more questions');
@@ -346,7 +366,9 @@ export default function ImportBatchReviewPage() {
                 fontWeight: 700, fontSize: 14, cursor: generatingMore ? 'not-allowed' : 'pointer',
               }}
             >
-              {generatingMore ? 'Generating…' : `➕ Add ${missingCount} Missing Question${missingCount !== 1 ? 's' : ''} (AI)`}
+              {generatingMore
+                ? `Generating… ${generateMoreProgress ? `(${generateMoreProgress.done}/${generateMoreProgress.total})` : ''}`
+                : `➕ Add ${missingCount} Missing Question${missingCount !== 1 ? 's' : ''} (AI)`}
             </button>
           )}
           <button
