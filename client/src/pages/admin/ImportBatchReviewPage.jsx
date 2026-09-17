@@ -264,11 +264,17 @@ export default function ImportBatchReviewPage() {
 
   const [generatingMore, setGeneratingMore] = useState(false);
 
-  // "Not complete" is defined by expected_count (set at import time — see
-  // ImportBatchesPage.jsx) vs. how many actually got extracted/staged so
-  // far. Only shown when the admin actually gave an expected_count; there's
-  // no way to know a paper is "incomplete" otherwise.
-  const missingCount = batch?.expected_count ? Math.max(0, batch.expected_count - batch.extracted_count) : 0;
+  // "Not complete" was originally only defined by expected_count (set at
+  // import time). Now there's a floor too: every batch should have at least
+  // MIN_QUESTIONS regardless of whether an admin ever typed in an expected
+  // count — most older/existing batches never had one set, which meant this
+  // button silently never appeared for them even when they were clearly
+  // short (e.g. 26 of what should obviously be a full 50-question paper).
+  // The higher of the two wins, so a deliberately-set expected_count above
+  // 50 (a longer paper) still works as before.
+  const MIN_QUESTIONS = 50;
+  const targetCount = Math.max(batch?.expected_count || 0, MIN_QUESTIONS);
+  const missingCount = batch ? Math.max(0, targetCount - batch.extracted_count) : 0;
 
   const generateMore = async () => {
     setGeneratingMore(true);
@@ -333,7 +339,7 @@ export default function ImportBatchReviewPage() {
             <button
               onClick={generateMore}
               disabled={generatingMore}
-              title={`This paper only has ${batch.extracted_count} of the ${batch.expected_count} expected questions — generate the missing ${missingCount} with AI (they'll need review like any other question)`}
+              title={`This paper only has ${batch.extracted_count} of ${targetCount} questions — generate the missing ${missingCount} with AI (they'll need review like any other question)`}
               style={{
                 padding: '10px 16px', borderRadius: 'var(--r-lg)', border: '1.5px solid var(--border-md)',
                 background: generatingMore ? 'var(--bg-raised)' : 'var(--bg-surface)', color: 'var(--text-secondary)',
