@@ -692,8 +692,22 @@ router.post('/:id/generate-more', authenticate, authorize('superadmin', 'admin',
     await recomputeBatchCounts(db, req.params.id);
     res.json({ message: `Generated ${inserted} question(s) — sitting in Needs Review like any other staged question`, inserted });
   } catch (err) {
-    console.error('POST /import/batches/:id/generate-more error:', err.message);
-    res.status(500).json({ error: err.message });
+    const geminiErr = parseGeminiError(err);
+    if (geminiErr.isQuotaExceeded) {
+      // Same shape as every other AI-calling route in this app — a raw
+      // Gemini quota/outage error is a temporary, retry-able condition, not
+      // a real 500. Letting the raw {"error":{"code":503,...}} JSON blob
+      // leak through as err.message (what this used to do) is genuinely
+      // confusing on the client — it reads like a broken feature, not
+      // "try again in a moment".
+      return res.status(503).json({
+        error: 'AI is temporarily unavailable (high demand) — try again in a moment.',
+        code: 'AI_QUOTA_EXCEEDED',
+        retry_delay_seconds: geminiErr.retryDelaySeconds,
+      });
+    }
+    console.error('POST /import/batches/:id/generate-more error:', geminiErr.message || err.message);
+    res.status(500).json({ error: geminiErr.message || err.message });
   }
 });
 

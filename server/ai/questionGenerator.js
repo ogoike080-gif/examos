@@ -85,12 +85,42 @@ function parseGeminiError(err) {
     status === 'RESOURCE_EXHAUSTED' ||
     /RESOURCE_EXHAUSTED|quota/i.test(rawMessage);
 
-  if (!isQuotaExceeded) {
-    // Not a quota error — pass through a short, human-readable version rather
-    // than dumping the full raw SDK error (which can be a huge nested JSON
-    // blob) into a UI toast or a stored error_message column.
+  // A separate, genuinely different failure: Gemini itself is temporarily
+  // overloaded (503/UNAVAILABLE, "currently experiencing high demand") —
+  // nothing to do with THIS app's usage or any quota, it clears on its own
+  // usually within seconds to a couple of minutes. Distinct from quota
+  // exhaustion (which can mean "wait until tomorrow"), but every existing
+  // caller already knows how to back off and retry on isQuotaExceeded, so
+  // this reuses that same flag/mechanism rather than requiring every one of
+  // them to separately learn a second retryable-error shape. This exact
+  // error text has shown up from more than one AI call in this app already
+  // (see services/autoDiagramCropper.js) — worth catching centrally here
+  // rather than patching each call site individually.
+  const isTemporarilyUnavailable =
+    code === 503 ||
+    status === 'UNAVAILABLE' ||
+    /experiencing high demand|currently unavailable/i.test(rawMessage);
+
+  if (!isQuotaExceeded && !isTemporarilyUnavailable) {
+    // Not a quota/availability error — pass through a short, human-readable
+    // version rather than dumping the full raw SDK error (which can be a
+    // huge nested JSON blob) into a UI toast or a stored error_message
+    // column.
     const shortMessage = (apiError?.message || rawMessage).slice(0, 300);
     return { message: shortMessage, isQuotaExceeded: false, retryDelaySeconds: null };
+  }
+
+  if (isTemporarilyUnavailable && !isQuotaExceeded) {
+    // Gemini's own 503s don't come with a RetryInfo/retryDelay the way
+    // quota errors do — there's nothing to parse out, callers fall back to
+    // their own short default cooldown (e.g. DEFAULT_QUOTA_COOLDOWN_MS in
+    // the auto-solver/auto-cropper services) the same way they already do
+    // when retryDelaySeconds is null for a real quota error.
+    return {
+      message: 'AI is temporarily unavailable (high demand on Gemini\'s end, not this app) — try again in a moment.',
+      isQuotaExceeded: true, // reusing the existing flag — see comment above
+      retryDelaySeconds: null,
+    };
   }
 
   // Look for Google's RetryInfo detail block: { "@type": ".../RetryInfo",
