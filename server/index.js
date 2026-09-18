@@ -47,23 +47,52 @@ const paymentsRoutes = require('./routes/payments');
 const { paystackWebhookHandler } = paymentsRoutes;
 
 // ── CORS: allow localhost AND any 192.168.x.x / 10.x.x.x on port 3000 ──
+// ── CORS ──────────────────────────────────────────────────────────────
+// The production domain is hardcoded here ON PURPOSE. It used to depend
+// entirely on process.env.CLIENT_URL being set correctly; when that env var
+// is missing (or has a trailing slash, or says www when the browser says
+// non-www), EVERY request carrying `Origin: https://examaye.com` is
+// rejected — including the browser's own requests for /assets/*.js and
+// /assets/*.css, because Vite tags those with `crossorigin`, which makes
+// the browser send an Origin header even though they are same-origin.
+// A rejected request falls straight through to the global error handler,
+// which answers with a JSON body — which is exactly the
+// "net::ERR_ABORTED 500" on vendor/ui/index .js and the
+// "Refused to apply style ... MIME type ('application/json')" in devtools,
+// with the page rendering as a blank white screen.
+const PRODUCTION_ORIGINS = [
+  'https://examaye.com',
+  'https://www.examaye.com',
+];
+
+const stripTrailingSlash = (value) => String(value || '').trim().replace(/\/+$/, '');
+
 function isAllowedOrigin(origin) {
   if (!origin) return true; // non-browser / curl requests
+  const clean = stripTrailingSlash(origin);
+
+  // The deployed production domain, with and without www.
+  if (PRODUCTION_ORIGINS.includes(clean)) return true;
+
   const allowed = [
     'http://localhost:3000',
     'http://127.0.0.1:3000',
+    'http://localhost:5173',
+    'http://127.0.0.1:5173',
   ];
-  // Allow the deployed production domain itself (client is served from
-  // this same server, so its own JS module requests carry this Origin).
-  if (process.env.CLIENT_URL && origin === process.env.CLIENT_URL) return true;
-  // Also allow any *.up.railway.app domain as a safety net in case
-  // CLIENT_URL isn't set or Railway's assigned domain changes.
-  if (/^https:\/\/[a-z0-9-]+\.up\.railway\.app$/.test(origin)) return true;
-  if (allowed.includes(origin)) return true;
-  // Allow any LAN IP on port 3000
-  if (/^http:\/\/192\.168\.\d+\.\d+:3000$/.test(origin)) return true;
-  if (/^http:\/\/10\.\d+\.\d+\.\d+:3000$/.test(origin))  return true;
-  if (/^http:\/\/172\.(1[6-9]|2\d|3[01])\.\d+\.\d+:3000$/.test(origin)) return true;
+  if (allowed.includes(clean)) return true;
+
+  // Still honour CLIENT_URL if it is set (trailing slash tolerated now).
+  if (process.env.CLIENT_URL && clean === stripTrailingSlash(process.env.CLIENT_URL)) return true;
+
+  // Any *.up.railway.app domain, as a safety net.
+  if (/^https:\/\/[a-z0-9-]+\.up\.railway\.app$/.test(clean)) return true;
+
+  // Any LAN IP on port 3000
+  if (/^http:\/\/192\.168\.\d+\.\d+:3000$/.test(clean)) return true;
+  if (/^http:\/\/10\.\d+\.\d+\.\d+:3000$/.test(clean))  return true;
+  if (/^http:\/\/172\.(1[6-9]|2\d|3[01])\.\d+\.\d+:3000$/.test(clean)) return true;
+
   return false;
 }
 
@@ -116,7 +145,13 @@ app.use(
     crossOriginEmbedderPolicy: false
   })
 );
-app.use(cors(corsOptions));
+// CORS is applied to the API and uploads only — NOT globally. The frontend
+// is served by this same server (same origin), so its own JS/CSS must never
+// be able to fail a CORS check and get a JSON error body instead of the
+// file. Socket.io does its own CORS (configured above).
+app.use('/api', cors(corsOptions));
+app.use('/uploads', cors(corsOptions));
+app.options('/api/*', cors(corsOptions));
 
 // Paystack's checkout (the bank-transfer/USSD screen especially) has its
 // own "copy" buttons next to the account number, reference, etc. — those
@@ -261,6 +296,16 @@ if (process.env.NODE_ENV === 'production') {
 // Global error handler
 app.use((err, req, res, next) => {
   console.error(err.stack);
+
+  // A blocked origin is a 403, not a 500 — it should never be able to
+  // masquerade as a broken server or a corrupt asset.
+  if (err && err.message === 'Not allowed by CORS') {
+    return res.status(403).json({
+      error: 'CORS blocked',
+      origin: req.headers.origin || null,
+    });
+  }
+
   res.status(err.status || 500).json({
     error: err.message || 'Internal server error',
   });
