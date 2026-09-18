@@ -2,7 +2,7 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
 const { getDB } = require('../models/db');
-const { generateToken, authenticate } = require('../middleware/auth');
+const { generateToken, authenticate, startSession } = require('../middleware/auth');
 
 const router = express.Router();
 
@@ -162,7 +162,20 @@ router.post('/login', async (req, res) => {
       }
     }
 
-    const token = generateToken(user);
+    // Single-active-session enforcement (see middleware/auth.js): this
+    // login becomes the ONLY valid session for this account from this
+    // moment on. If the same surname/reg-number/staff-ID/email+password is
+    // already logged in somewhere else — another device, another
+    // browser, a friend helping out remotely — that session's next request
+    // gets rejected with SESSION_SUPERSEDED. Skipped for the hardcoded dev
+    // fallback admin (no real id/row to persist a session against).
+    let sessionId;
+    if (user.id && user.email !== 'admin@examos.com') {
+      try { sessionId = await startSession(db, user.id); }
+      catch (e) { console.error('startSession failed:', e.message); }
+    }
+
+    const token = generateToken(user, sessionId);
 
     const safeUser = {
       id: user.id,
@@ -231,12 +244,20 @@ router.post('/register', async (req, res) => {
       ]
     );
 
+    // Same single-active-session enforcement as /login (see
+    // middleware/auth.js) — a fresh signup starts as this account's only
+    // valid session too, though in practice a brand-new id has nothing to
+    // supersede yet.
+    let sessionId;
+    try { sessionId = await startSession(db, id); }
+    catch (e) { console.error('startSession failed:', e.message); }
+
     const token = generateToken({
       id,
       email,
       full_name,
       role
-    });
+    }, sessionId);
 
     res.status(201).json({
       token,
@@ -255,6 +276,23 @@ router.post('/register', async (req, res) => {
     res.status(500).json({
       error: 'Registration failed'
     });
+  }
+});
+
+// LOGOUT — clears this account's current_session_id so the token this
+// browser is holding can never be reused (e.g. if it were intercepted
+// after logout). Not required for the single-session rule itself (a new
+// login elsewhere already invalidates every other session on its own —
+// see startSession in middleware/auth.js), just a clean way to end THIS
+// session deliberately rather than leaving it valid until a future login
+// happens to overwrite it.
+router.post('/logout', authenticate, async (req, res) => {
+  try {
+    const db = getDB();
+    await db.execute('UPDATE users SET current_session_id=NULL WHERE id=?', [req.user.id]);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 

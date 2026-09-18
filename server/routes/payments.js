@@ -4,7 +4,8 @@ const { v4: uuidv4 } = require('uuid');
 const axios = require('axios');
 const { getDB } = require('../models/db');
 const bcrypt = require('bcryptjs');
-const { authenticate, optionalAuthenticate, generateToken } = require('../middleware/auth');
+const { authenticate, optionalAuthenticate, generateToken, startSession } = require('../middleware/auth');
+const { grantExamUnlock, listUnlockedExamBodies } = require('../services/examAccess');
 
 const router = express.Router();
 
@@ -126,7 +127,11 @@ async function finalizePayment(db, payment, paystackData) {
       'INSERT INTO users (id,email,password_hash,full_name,role) VALUES (?,?,?,?,?)',
       [userId, email.toLowerCase().trim(), hash, fullName, 'candidate']
     );
-    const token = generateToken({ id: userId, email, full_name: fullName, role: 'candidate' });
+    // Single-active-session enforcement (see middleware/auth.js) applies
+    // here too — this checkout-created account's first login is this
+    // session, same as a normal /auth/login or /auth/register.
+    const sessionId = await startSession(db, userId);
+    const token = generateToken({ id: userId, email, full_name: fullName, role: 'candidate' }, sessionId);
     newSession = { token, user: { id: userId, email, full_name: fullName, role: 'candidate' } };
   }
 
@@ -135,15 +140,31 @@ async function finalizePayment(db, payment, paystackData) {
     [userId, JSON.stringify(paystackData), payment.id]
   );
 
-  const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
-  await db.execute(`
-    INSERT INTO user_subscriptions (id, user_id, plan_id, plan_name, expires_at, payment_id)
-    VALUES (?, ?, ?, ?, ?, ?)
-    ON DUPLICATE KEY UPDATE plan_id=?, plan_name=?, expires_at=?, payment_id=?
-  `, [
-    uuidv4(), userId, payment.plan_id, payment.plan_name, expiresAt, payment.id,
-    payment.plan_id, payment.plan_name, expiresAt, payment.id,
-  ]);
+  let expiresAt;
+  if (payment.plan_id === 'student' && payment.exam_body) {
+    // The 'student' plan is really "unlock this one exam_body" (WAEC,
+    // JAMB, a university course, etc. — see getStudentPrice above), not a
+    // blanket subscription. This is the actual access grant: it records
+    // WHICH exam_body was paid for, in its own table, rather than the flat
+    // user_subscriptions row below (which would make paying for WAEC also
+    // unlock JAMB and every university course for the same 30 days — the
+    // exact bug this fixes). See services/examAccess.js hasExamAccess,
+    // which is what routes/questions.js actually checks against this.
+    expiresAt = await grantExamUnlock(db, userId, payment.exam_body, payment.id);
+  } else {
+    // 'school' (flat, unlock-everything for a whole institution) and any
+    // future non-exam-body-specific plan still go through the original
+    // flat subscription row.
+    expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+    await db.execute(`
+      INSERT INTO user_subscriptions (id, user_id, plan_id, plan_name, expires_at, payment_id)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON DUPLICATE KEY UPDATE plan_id=?, plan_name=?, expires_at=?, payment_id=?
+    `, [
+      uuidv4(), userId, payment.plan_id, payment.plan_name, expiresAt, payment.id,
+      payment.plan_id, payment.plan_name, expiresAt, payment.id,
+    ]);
+  }
 
   return { alreadyProcessed: false, expiresAt, newSession };
 }
@@ -354,8 +375,16 @@ router.get('/subscription', authenticate, async (req, res) => {
       'SELECT * FROM user_subscriptions WHERE user_id=?', [req.user.id]
     );
 
+    // Per-exam-body unlocks (WAEC/JAMB/university/etc.) are tracked
+    // separately from the flat plan row above — see services/examAccess.js.
+    // Always included, even for a 'free'/expired flat plan, since a
+    // self-pay candidate's real access is defined by these, not by
+    // user_subscriptions at all (that table now only ever holds 'school').
+    const unlocks = await listUnlockedExamBodies(db, req.user.id);
+    const unlocked_exam_bodies = unlocks.map(u => ({ exam_body: u.exam_body, expires_at: u.expires_at }));
+
     if (!rows[0] || (rows[0].expires_at && new Date(rows[0].expires_at) < new Date())) {
-      return res.json({ plan_id:'free', plan_name:'Free', active:true });
+      return res.json({ plan_id:'free', plan_name:'Free', active:true, unlocked_exam_bodies });
     }
 
     res.json({
@@ -363,6 +392,7 @@ router.get('/subscription', authenticate, async (req, res) => {
       plan_name: rows[0].plan_name,
       expires_at: rows[0].expires_at,
       active: true,
+      unlocked_exam_bodies,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });

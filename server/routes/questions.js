@@ -7,7 +7,8 @@ const { getDB } = require('../models/db');
 const { authenticate, optionalAuthenticate, authorize } = require('../middleware/auth');
 const { generateQuestionsWithAI, extractQuestionsFromImage, explainAnswer, parseGeminiError, EXPLANATION_BLOCKED_MARKER, solveObjectiveQuestion } = require('../ai/questionGenerator');
 const { cleanMathNotation, cleanQuestionFields } = require('../utils/mathNotation');
-const { FREE_QUESTION_LIMIT, hasActivePaidPlan, getRemainingQuota, consumeQuota } = require('../services/freeTrial');
+const { FREE_QUESTION_LIMIT, getRemainingQuota, consumeQuota } = require('../services/freeTrial');
+const { isSchoolEnrolled, hasExamAccess } = require('../services/examAccess');
 const AdmZip = require('adm-zip');
 const sharp = require('sharp');
 
@@ -189,29 +190,29 @@ router.get('/', optionalAuthenticate, async (req, res) => {
     const pageNum = Math.max(1, Number(page) || 1);
     const offsetNum = (pageNum - 1) * limitNum;
 
-    // Free-trial gate: 5 free questions before being asked to subscribe.
-    // Two cases share the same quota logic (see services/freeTrial.js):
-    //  - A logged-in candidate without a paid plan, keyed by their user id.
+    // Free-trial / paywall gate: 5 free questions before being asked to
+    // pay for the specific exam body (WAEC/JAMB/university/etc. — see
+    // services/examAccess.js) being practiced. Three cases share the same
+    // quota logic (see services/freeTrial.js):
     //  - A completely anonymous visitor hitting "Practice Free" from the
-    //    landing page with no account at all — this route used to require
-    //    `authenticate`, which meant an anonymous visitor got a 401 on their
-    //    very first question and was bounced straight to /login before ever
-    //    seeing a question. Now it's optionalAuthenticate, and an anonymous
-    //    request is tracked by a client-generated x-anon-id header instead
-    //    of a user id (see utils/anonId.js on the client) — same table, same
-    //    5-question limit, just a different kind of key. Staff roles
-    //    (admin/examiner/etc.) never hit this either way.
+    //    landing page with no account at all — tracked by a
+    //    client-generated x-anon-id header (see utils/anonId.js).
+    //  - A logged-in SELF-PAY candidate (registered via /auth/register, or
+    //    auto-created by an anonymous checkout) who hasn't unlocked THIS
+    //    exam_body yet — tracked by their user id instead of an anon id,
+    //    same 5-question limit, same table.
+    //  - A logged-in self-pay candidate who HAS unlocked this exam_body
+    //    (hasExamAccess below) skips the gate entirely for it — this is the
+    //    actual point of paying: access to what was paid for, not a
+    //    5-question trial forever.
+    // A school-enrolled candidate (reg_number/class_name set — see
+    // isSchoolEnrolled) or any staff role never hits this at all; their
+    // institution already paid, same as before this feature existed.
     let effectiveLimit = limitNum;
     let freeTrial = null;
     const isAnonymous = !req.user;
     const anonId = req.headers['x-anon-id'];
-    // The 5-free-question gate applies ONLY to a completely anonymous
-    // "Practice Free" visitor with no account at all. An enrolled candidate
-    // who logs in with their surname/reg-number (see routes/auth.js) is
-    // already accounted for by their school and gets full, unrestricted
-    // access — this used to also gate any authenticated role==='candidate'
-    // account, which wrongly capped real enrolled students at 5 questions
-    // too. Only the truly external, not-logged-in visitor gets limited now.
+    const isSelfPayCandidate = !!req.user && req.user.role === 'candidate' && !isSchoolEnrolled(req.user);
     // Wrapped in its own try/catch, separate from the rest of the route —
     // this gate is a nice-to-have (monetization), not core functionality.
     // A failure here used to bubble all the way up and 500 the ENTIRE
@@ -219,24 +220,35 @@ router.get('/', optionalAuthenticate, async (req, res) => {
     // to demo questions — one gate bug broke the whole endpoint for
     // everyone, paid or not, anonymous or not.
     try {
-      if (isAnonymous) {
-        const quotaKey = anonId ? `anon:${anonId}` : null;
-        // No anon id sent at all — can't track this visitor's quota, so
-        // rather than either trusting them unlimited or blocking outright,
-        // fall back to serving normally-limited results with no free-trial
-        // bookkeeping. In practice the client always sends this (see
-        // main.jsx), so this is just a safety fallback, not the expected path.
-        if (quotaKey) {
-          const remaining = await getRemainingQuota(db, quotaKey);
-          if (remaining <= 0) {
-            return res.status(402).json({
-              error: `You've used all ${FREE_QUESTION_LIMIT} free questions. Log in or subscribe to keep practicing.`,
-              code: 'FREE_LIMIT_REACHED',
-              free_limit: FREE_QUESTION_LIMIT,
-            });
+      if (isAnonymous || isSelfPayCandidate) {
+        const alreadyUnlocked = isSelfPayCandidate
+          ? await hasExamAccess(db, req.user, exam_type)
+          : false;
+
+        if (!alreadyUnlocked) {
+          const quotaKey = isAnonymous
+            ? (anonId ? `anon:${anonId}` : null)
+            : `user:${req.user.id}`;
+          // No anon id sent at all — can't track this visitor's quota, so
+          // rather than either trusting them unlimited or blocking outright,
+          // fall back to serving normally-limited results with no free-trial
+          // bookkeeping. In practice the client always sends this (see
+          // main.jsx), so this is just a safety fallback, not the expected path.
+          if (quotaKey) {
+            const remaining = await getRemainingQuota(db, quotaKey);
+            if (remaining <= 0) {
+              return res.status(402).json({
+                error: isAnonymous
+                  ? `You've used all ${FREE_QUESTION_LIMIT} free questions. Log in or subscribe to keep practicing.`
+                  : `You've used your ${FREE_QUESTION_LIMIT} free questions for this exam. Unlock ${exam_type || 'this exam'} to keep practicing.`,
+                code: 'FREE_LIMIT_REACHED',
+                free_limit: FREE_QUESTION_LIMIT,
+                exam_body: exam_type || null,
+              });
+            }
+            effectiveLimit = Math.min(limitNum, remaining);
+            freeTrial = { remaining_before: remaining, limit: FREE_QUESTION_LIMIT, quotaKey };
           }
-          effectiveLimit = Math.min(limitNum, remaining);
-          freeTrial = { remaining_before: remaining, limit: FREE_QUESTION_LIMIT, quotaKey };
         }
       }
     } catch (gateErr) {

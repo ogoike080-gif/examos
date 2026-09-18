@@ -250,6 +250,22 @@ async function createSchema() {
     console.log('✅ class_name column added');
   } catch (e) { /* already exists — safe to ignore */ }
 
+  // Single-active-session enforcement — see middleware/auth.js and
+  // services/examAccess.js. Every successful login (any method: email,
+  // surname/reg-number, staff ID, or the auto-login after an anonymous
+  // checkout) generates a fresh random session id, overwrites whatever was
+  // stored here, and embeds that same id in the issued JWT as `sid`. Any
+  // OTHER token for this account — including one still sitting valid in
+  // someone else's browser — stops matching this column the instant a new
+  // login happens, so the next request it makes gets rejected. That's the
+  // entire mechanism behind "no two people can be logged into the same
+  // account at once": there's nothing to revoke or track per-device, just
+  // one column that always holds whichever login happened most recently.
+  try {
+    await db.execute('ALTER TABLE users ADD COLUMN current_session_id VARCHAR(64) NULL');
+    console.log('✅ current_session_id column added');
+  } catch (e) { /* already exists — safe to ignore */ }
+
   // Add 'parent' role if upgrading from older version
   try {
     await db.execute(
