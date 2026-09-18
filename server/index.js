@@ -118,6 +118,19 @@ app.use(
 );
 app.use(cors(corsOptions));
 
+// Paystack's checkout (the bank-transfer/USSD screen especially) has its
+// own "copy" buttons next to the account number, reference, etc. — those
+// need clipboard-write inside its iframe. Browsers deny the Clipboard API
+// to embedded content by default unless the page explicitly grants it via
+// this header; without it, clicking Paystack's own copy icon silently
+// fails with a "Permissions policy violation" in the console (not
+// something Paystack's widget can work around on its own — it depends on
+// the embedding page, i.e. us, to allow it).
+app.use((req, res, next) => {
+  res.setHeader('Permissions-Policy', 'clipboard-write=(self "https://checkout.paystack.com" "https://js.paystack.co"), clipboard-read=(self)');
+  next();
+});
+
 // Rate limiting
 //
 // This exists to stop abuse (scraping, brute-forcing, a runaway script) —
