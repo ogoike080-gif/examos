@@ -724,14 +724,6 @@ Rules:
       try {
         response = await ai.models.generateContent({ model: VISION_MODEL, contents });
       } catch (visionErr) {
-        // Only fall back to the text-only model on a genuine per-call
-        // failure — a QUOTA error on the vision model almost always means
-        // the SAME free-tier budget the lite model draws from is also
-        // exhausted, so silently retrying just burns a second call before
-        // hitting the identical 429. Let it propagate to the outer catch
-        // below, which is what actually reports quota_exceeded correctly.
-        const visionGeminiErr = parseGeminiError(visionErr);
-        if (visionGeminiErr.isQuotaExceeded) throw visionErr;
         console.error(`solveObjectiveQuestion vision model (${VISION_MODEL}) failed, falling back to ${MODEL}:`, visionErr.message);
         response = await ai.models.generateContent({ model: MODEL, contents });
       }
@@ -742,28 +734,6 @@ Rules:
     // Preserve $...$ LaTeX in solution_steps as-is — rendered with KaTeX.
     return result;
   } catch (err) {
-    // A quota/rate-limit error means "the AI was never actually asked" —
-    // it is NOT the same thing as "this question is unsolvable". Rethrowing
-    // it here (instead of swallowing it into { solvable: false, reason },
-    // which is what this used to do) lets solveAndSaveMissingAnswer's own
-    // catch block — which already has this exact check — correctly return
-    // status: 'quota_exceeded' instead of 'unsolvable'.
-    //
-    // That distinction matters in two concrete ways this app depends on:
-    //   1. routes/questions.js generate-explanation then returns 429 with a
-    //      retry delay instead of a flat 400 "could not be solved
-    //      automatically" — the client's queue treats those very
-    //      differently, and a 429 is honest about being retryable.
-    //   2. services/autoAnswerSolver.js's background batch job stops and
-    //      cools down on quota_exceeded instead of (as it silently did
-    //      before this fix) recording every question in the batch as a
-    //      failed 24h-cooldown "attempt" purely because Gemini was
-    //      rate-limited for a few seconds — which meant a single quota
-    //      blip could defer perfectly solvable questions for a full day.
-    // Mirrors the identical, already-correct pattern in
-    // locateQuestionDiagram above.
-    const geminiErr = parseGeminiError(err);
-    if (geminiErr.isQuotaExceeded) throw Object.assign(new Error(geminiErr.message), { isQuotaExceeded: true, retryDelaySeconds: geminiErr.retryDelaySeconds });
     console.error('solveObjectiveQuestion failed:', err.message);
     return { solvable: false, reason: err.message };
   }
@@ -889,6 +859,27 @@ Respond in JSON only (no markdown, no backticks):
       if (outcome.explanation) return outcome.explanation;
       lastErr = new Error('AI returned no explanation field');
     } catch (err) {
+      // A quota/rate-limit error is NOT a transient hiccup worth retrying —
+      // it is GUARANTEED to fail again immediately, since nothing changes
+      // between attempts a second apart. This used to fall through to the
+      // generic retry-then-swallow-into-'' path below like any other error,
+      // which meant: 3 wasted calls against an already-exhausted quota,
+      // several seconds of delay, and then a silent '' returned as if
+      // nothing were wrong. The route (see generate-explanation in
+      // routes/questions.js) would then respond 200 with an empty
+      // explanation — never a 429 — so the client's own quota-cooldown
+      // logic (explanationQueue.js, which already has a
+      // short-circuit-everything-else path built and waiting for exactly
+      // this) never got to see it. Every question's explanation request hit
+      // the same exhausted quota independently and failed the same silent
+      // way — which is what "most questions can't generate an explanation"
+      // actually was. Rethrowing immediately, tagged the same way
+      // solveObjectiveQuestion/locateQuestionDiagram above already do, lets
+      // the route return a real 429 AI_QUOTA_EXCEEDED instead.
+      const geminiErr = parseGeminiError(err);
+      if (geminiErr.isQuotaExceeded) {
+        throw Object.assign(new Error(geminiErr.message), { isQuotaExceeded: true, retryDelaySeconds: geminiErr.retryDelaySeconds });
+      }
       lastErr = err;
     }
     if (attempt < 3) await new Promise(r => setTimeout(r, 800 * attempt));

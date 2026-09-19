@@ -550,13 +550,30 @@ router.post('/:id/generate-explanation', optionalAuthenticate, async (req, res) 
       }
     }
 
-    const explanation = await explainAnswer({
-      question_text: question.question_text,
-      options,
-      correct_answers,
-      subject: question.subject_name,
-      question_type: question.question_type,
-    });
+    let explanation;
+    try {
+      explanation = await explainAnswer({
+        question_text: question.question_text,
+        options,
+        correct_answers,
+        subject: question.subject_name,
+        question_type: question.question_type,
+      });
+    } catch (explainErr) {
+      // explainAnswer now rethrows a quota error instead of swallowing it
+      // (see questionGenerator.js) — same 429 shape as the auto-solve
+      // branch above, which explanationQueue.js on the client is already
+      // built to recognize and short-circuit on for every other pending
+      // question, not just this one.
+      if (explainErr.isQuotaExceeded) {
+        return res.status(429).json({
+          error: 'AI explanations are temporarily unavailable — daily quota reached. Try again shortly.',
+          code: 'AI_QUOTA_EXCEEDED',
+          retry_delay_seconds: explainErr.retryDelaySeconds,
+        });
+      }
+      throw explainErr;
+    }
 
     // Persist even the blocked-marker text (see EXPLANATION_BLOCKED_MARKER in
     // questionGenerator.js) — that's deliberate, not a bug: it makes the
