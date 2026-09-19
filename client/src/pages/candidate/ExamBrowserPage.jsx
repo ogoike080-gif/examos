@@ -166,7 +166,7 @@ export default function ExamBrowserPage() {
 
   if (loading) return (
     <div style={{ minHeight:'100dvh', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:16, background:'var(--bg-base)' }}>
-      <div style={{ width:48, height:48, borderRadius:14, background:'linear-gradient(135deg,var(--brand-dark),var(--brand-light))', display:'flex', alignItems:'center', justifyContent:'center', fontSize:22, fontWeight:900, color:'#fff', boxShadow:'0 4px 20px var(--brand-glow)', animation:'float 2s ease-in-out infinite' }}>E</div>
+      <div style={{ width:48, height:48, borderRadius:14, background:'linear-gradient(135deg,var(--brand-dark),var(--brand-light))', display:'flex', alignItems:'center', justifyContent:'center', fontSize:22, fontWeight:900, color:'#fff', boxShadow:'0 4px 20px var(--brand-glow)', animation:'float 2s ease-in-out infinite' }}>S</div>
       <div className="spinner" style={{ width:28, height:28 }}/>
       <p style={{ color:'var(--text-muted)', fontSize:14 }}>Loading your exam...</p>
     </div>

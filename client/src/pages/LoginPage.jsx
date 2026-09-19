@@ -100,7 +100,7 @@ export default function LoginPage() {
       <div style={{
         position:'absolute', top:'-20%', left:'-10%',
         width:'60vw', height:'60vw', maxWidth:600, maxHeight:600,
-        background:'radial-gradient(circle, rgba(99,102,241,0.12) 0%, transparent 70%)',
+        background:'radial-gradient(circle, rgba(79,110,247,0.12) 0%, transparent 70%)',
         pointerEvents:'none', zIndex:0,
       }}/>
       <div style={{
@@ -123,9 +123,9 @@ export default function LoginPage() {
             display:'flex', alignItems:'center', justifyContent:'center',
             fontSize:17, fontWeight:900, color:'#fff',
             boxShadow:'0 2px 12px var(--brand-glow)',
-          }}>E</div>
+          }}>S</div>
           <div>
-            <div style={{ fontFamily:'var(--font-display)', fontSize:16, fontWeight:800, letterSpacing:'-0.02em', lineHeight:1 }}>Examaye</div>
+            <div style={{ fontFamily:'var(--font-display)', fontSize:16, fontWeight:800, letterSpacing:'-0.02em', lineHeight:1 }}>StudyNavo</div>
             <div style={{ fontSize:10, color:'var(--text-muted)', fontWeight:500 }}>2.0 · CBT Platform</div>
           </div>
         </div>
@@ -289,7 +289,7 @@ export default function LoginPage() {
       {/* Footer */}
       <footer style={{ textAlign:'center', padding:'16px 24px', position:'relative', zIndex:1 }}>
         <p style={{ fontSize:11, color:'var(--text-dim)' }}>
-          Ogotech Conventional/Technical School · Examaye · 2026
+          Ogotech Conventional/Technical School · StudyNavo · 2026
         </p>
       </footer>
     </div>

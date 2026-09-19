@@ -3,16 +3,26 @@
    Mobile-first · Dark/Light mode · Glassmorphism
    ═══════════════════════════════════════════════════════════════ */
 
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700&family=Syne:wght@700;800;900&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&family=Sora:wght@600;700;800&display=swap');
 
 /* ── CSS Custom Properties ── */
 :root {
-  /* Brand */
-  --brand:          #6366F1;
-  --brand-light:    #818CF8;
-  --brand-dark:     #4F46E5;
-  --brand-dim:      rgba(99,102,241,0.12);
-  --brand-glow:     rgba(99,102,241,0.25);
+  /* Brand — StudyNavo: a confident, "navigate your studies" royal
+     indigo-blue as the primary, paired with a warm gold accent for
+     celebratory/achievement moments (streaks, badges, correct-answer
+     highlights that want to feel rewarding rather than just "success
+     green"). Kept separate from --success/--warning/--danger below —
+     those carry meaning across the whole app (right/wrong, alerts) and
+     are deliberately untouched by this rebrand. */
+  --brand:          #4F6EF7;
+  --brand-light:    #7C93FA;
+  --brand-dark:     #3B4FD9;
+  --brand-dim:      rgba(79,110,247,0.12);
+  --brand-glow:     rgba(79,110,247,0.28);
+
+  --gold:           #F5B942;
+  --gold-light:     #FFD37A;
+  --gold-dim:       rgba(245,185,66,0.14);
 
   /* Semantic */
   --success:        #10B981;
@@ -24,9 +34,13 @@
   --info:           #3B82F6;
   --info-dim:       rgba(59,130,246,0.12);
 
-  /* Typography */
-  --font-display:   'Syne', sans-serif;
-  --font-body:      'Inter', sans-serif;
+  /* Typography — Sora for display (a confident geometric grotesk that
+     reads as premium/modern at large sizes without tipping into
+     novelty), Plus Jakarta Sans for body (warmer and slightly more
+     rounded than Inter, stays very legible at small sizes on mobile —
+     most of this app's traffic — while still feeling contemporary). */
+  --font-display:   'Sora', sans-serif;
+  --font-body:      'Plus Jakarta Sans', sans-serif;
   --font-mono:      'JetBrains Mono', monospace;
 
   /* Spacing scale */
@@ -98,7 +112,7 @@
   --shadow-md:  0 4px 16px rgba(0,0,0,0.4);
   --shadow-lg:  0 12px 40px rgba(0,0,0,0.5);
   --shadow-xl:  0 24px 64px rgba(0,0,0,0.6);
-  --shadow-glow: 0 0 40px rgba(99,102,241,0.2);
+  --shadow-glow: 0 0 40px rgba(79,110,247,0.2);
 
   --scrollbar-track: #111118;
   --scrollbar-thumb: #2A2A3A;
@@ -128,7 +142,7 @@
   --shadow-md:  0 4px 16px rgba(0,0,0,0.08);
   --shadow-lg:  0 12px 40px rgba(0,0,0,0.10);
   --shadow-xl:  0 24px 64px rgba(0,0,0,0.12);
-  --shadow-glow: 0 0 40px rgba(99,102,241,0.15);
+  --shadow-glow: 0 0 40px rgba(79,110,247,0.15);
 
   --scrollbar-track: #F0F0F8;
   --scrollbar-thumb: #CCCCDD;
@@ -144,16 +158,26 @@ html {
   overscroll-behavior: none;
 }
 
+/* A flat --bg-base is still used as a plain fill all over the app (cards,
+   panels, etc.) — deliberately left alone. This layers a soft, brand-
+   colored glow ONLY on the page body itself, as separate background-image
+   gradients on top of that same flat color, so nothing else changes. */
 body {
   font-family: var(--font-body);
-  background: var(--bg-base);
+  background-color: var(--bg-base);
+  background-image:
+    radial-gradient(ellipse 70% 50% at 15% -10%, var(--brand-glow), transparent 60%),
+    radial-gradient(ellipse 60% 45% at 100% 0%, var(--gold-dim), transparent 60%),
+    radial-gradient(ellipse 55% 40% at 50% 100%, var(--brand-dim), transparent 60%);
+  background-attachment: fixed;
+  background-repeat: no-repeat;
   color: var(--text-primary);
   line-height: 1.6;
   min-height: 100dvh;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   overflow-x: hidden;
-  transition: background var(--t-slow), color var(--t-slow);
+  transition: background-color var(--t-slow), color var(--t-slow);
 }
 
 /* ── Scrollbar ── */
@@ -464,7 +488,7 @@ textarea { resize: vertical; min-height: 100px; }
 
 /* ── Gradient text ── */
 .gradient-text {
-  background: linear-gradient(135deg, var(--brand-light), #A78BFA, #60A5FA);
+  background: linear-gradient(135deg, var(--brand-light) 0%, var(--brand) 55%, var(--gold) 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;

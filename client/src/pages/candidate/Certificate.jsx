@@ -45,11 +45,11 @@ export function Certificate({ candidate, exam, score, percentage, grade, date, s
       }}>
 
         {/* Outer decorative border */}
-        <div style={{ position:'absolute', inset:12, border:'3px solid #6366F1', borderRadius:10, pointerEvents:'none', zIndex:1 }}/>
-        <div style={{ position:'absolute', inset:16, border:'1px solid rgba(99,102,241,0.3)', borderRadius:8, pointerEvents:'none', zIndex:1 }}/>
+        <div style={{ position:'absolute', inset:12, border:'3px solid #4F6EF7', borderRadius:10, pointerEvents:'none', zIndex:1 }}/>
+        <div style={{ position:'absolute', inset:16, border:'1px solid rgba(79,110,247,0.3)', borderRadius:8, pointerEvents:'none', zIndex:1 }}/>
 
         {/* Background pattern */}
-        <div style={{ position:'absolute', inset:0, background:'radial-gradient(ellipse at 20% 50%, rgba(99,102,241,0.04) 0%, transparent 60%), radial-gradient(ellipse at 80% 50%, rgba(167,139,250,0.04) 0%, transparent 60%)', pointerEvents:'none' }}/>
+        <div style={{ position:'absolute', inset:0, background:'radial-gradient(ellipse at 20% 50%, rgba(79,110,247,0.04) 0%, transparent 60%), radial-gradient(ellipse at 80% 50%, rgba(167,139,250,0.04) 0%, transparent 60%)', pointerEvents:'none' }}/>
 
         {/* Gold corner ornaments */}
         {[
@@ -60,8 +60,8 @@ export function Certificate({ candidate, exam, score, percentage, grade, date, s
         ].map((pos, i) => (
           <div key={i} style={{ position:'absolute', ...pos, width:40, height:40, pointerEvents:'none', zIndex:2 }}>
             <svg viewBox="0 0 40 40" style={{ width:'100%', height:'100%' }}>
-              <path d="M2,2 L18,2 L2,18 Z" fill="#6366F1" opacity="0.6"/>
-              <path d="M2,2 L8,2 L2,8 Z" fill="#6366F1"/>
+              <path d="M2,2 L18,2 L2,18 Z" fill="#4F6EF7" opacity="0.6"/>
+              <path d="M2,2 L8,2 L2,8 Z" fill="#4F6EF7"/>
             </svg>
           </div>
         ))}
@@ -70,7 +70,7 @@ export function Certificate({ candidate, exam, score, percentage, grade, date, s
         <div style={{ position:'relative', zIndex:3, height:'100%', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', padding:'40px 60px', textAlign:'center' }}>
 
           {/* School name */}
-          <div style={{ fontSize:11, fontWeight:700, letterSpacing:'0.2em', color:'#6366F1', textTransform:'uppercase', marginBottom:6 }}>
+          <div style={{ fontSize:11, fontWeight:700, letterSpacing:'0.2em', color:'#4F6EF7', textTransform:'uppercase', marginBottom:6 }}>
             {schoolName || 'Ogotech Conventional/Technical School'}
           </div>
 
@@ -81,9 +81,9 @@ export function Certificate({ candidate, exam, score, percentage, grade, date, s
 
           {/* Decorative line */}
           <div style={{ display:'flex', alignItems:'center', gap:12, width:'60%', marginBottom:16 }}>
-            <div style={{ flex:1, height:1, background:'linear-gradient(90deg, transparent, #6366F1)' }}/>
+            <div style={{ flex:1, height:1, background:'linear-gradient(90deg, transparent, #4F6EF7)' }}/>
             <div style={{ fontSize:18 }}>⭐</div>
-            <div style={{ flex:1, height:1, background:'linear-gradient(90deg, #6366F1, transparent)' }}/>
+            <div style={{ flex:1, height:1, background:'linear-gradient(90deg, #4F6EF7, transparent)' }}/>
           </div>
 
           {/* "This is to certify" */}
@@ -127,7 +127,7 @@ export function Certificate({ candidate, exam, score, percentage, grade, date, s
             {[['Principal', principalName], ['Official Seal', null], ['Exam Officer', examOfficer]].map(([title, name], i) => (
               <div key={i} style={{ textAlign:'center', minWidth:140 }}>
                 {i === 1 ? (
-                  <div style={{ width:56, height:56, borderRadius:'50%', border:'2px solid #6366F1', margin:'0 auto 6px', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', color:'#6366F1' }}>
+                  <div style={{ width:56, height:56, borderRadius:'50%', border:'2px solid #4F6EF7', margin:'0 auto 6px', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', color:'#4F6EF7' }}>
                     <div style={{ fontSize:8, fontWeight:700, letterSpacing:'0.05em' }}>OFFICIAL</div>
                     <div style={{ fontSize:8, fontWeight:700 }}>SEAL</div>
                   </div>

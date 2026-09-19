@@ -128,7 +128,7 @@ function SetupScreen({ onStart }) {
   }, []);
 
   const EXAM_COLOR_PALETTE = ['#2563EB','#16A34A','#D97706','#DC2626','#7C3AED','#0891B2','#DB2777','#65A30D'];
-  const examColors = { CUSTOM: '#6366F1' };
+  const examColors = { CUSTOM: '#4F6EF7' };
   examTypes.forEach((e, i) => { if (!examColors[e]) examColors[e] = EXAM_COLOR_PALETTE[i % EXAM_COLOR_PALETTE.length]; });
 
   return (
@@ -136,9 +136,9 @@ function SetupScreen({ onStart }) {
       {/* Header */}
       <div style={{ background:'#1E3A5F', padding:'12px 24px', display:'flex', alignItems:'center', justifyContent:'space-between' }}>
         <div style={{ display:'flex', alignItems:'center', gap:12 }}>
-          <div style={{ width:36, height:36, borderRadius:8, background:'linear-gradient(135deg,#6366F1,#818CF8)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:18, fontWeight:900, color:'#fff' }}>E</div>
+          <div style={{ width:36, height:36, borderRadius:8, background:'linear-gradient(135deg,#4F6EF7,#7C93FA)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:18, fontWeight:900, color:'#fff' }}>S</div>
           <div>
-            <div style={{ color:'#fff', fontWeight:800, fontSize:16 }}>Examaye CBT</div>
+            <div style={{ color:'#fff', fontWeight:800, fontSize:16 }}>StudyNavo CBT</div>
             <div style={{ color:'rgba(255,255,255,0.6)', fontSize:11 }}>JAMB · WAEC · NECO · POST-UTME</div>
           </div>
         </div>
@@ -1080,7 +1080,7 @@ function MobileExamScreen({
 
         {/* Progress bar */}
         <div style={{ height:4, background:'rgba(255,255,255,0.12)', borderRadius:2, marginTop:10, overflow:'hidden' }}>
-          <div style={{ height:'100%', width:`${progressPct}%`, background:'linear-gradient(90deg,#3B82F6,#60A5FA)', borderRadius:2, transition:'width 0.25s ease' }}/>
+          <div style={{ height:'100%', width:`${progressPct}%`, background:'linear-gradient(90deg,#3B82F6,#7C93FA)', borderRadius:2, transition:'width 0.25s ease' }}/>
         </div>
         <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginTop:5 }}>
           <span style={{ color:'rgba(255,255,255,0.5)', fontSize:10.5 }}>Question {current+1} of {questions.length} · {progressPct}%</span>

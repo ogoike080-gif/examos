@@ -23,7 +23,7 @@ const FALLBACK_EXAM_TYPES = [
   { id:'NECO',     label:'NECO',      icon:'📙', color:'#D97706' },
   { id:'NABTEB',   label:'NABTEB',    icon:'📕', color:'#DC2626' },
   { id:'POST_UTME',label:'Post UTME', icon:'🏛',  color:'#7C3AED' },
-  { id:'CUSTOM',   label:'Practice',  icon:'✏️',  color:'#6366F1' },
+  { id:'CUSTOM',   label:'Practice',  icon:'✏️',  color:'#4F6EF7' },
 ];
 const EXTRA_ICON_COLORS = [
   { icon:'🏫', color:'#0891B2' }, { icon:'🎓', color:'#DB2777' },
@@ -138,8 +138,8 @@ function SetupScreen({ onStart }) {
       {/* Header */}
       <header style={{ height:56, display:'flex', alignItems:'center', justifyContent:'space-between', padding:'0 24px', background:'var(--bg-glass)', backdropFilter:'blur(20px)', WebkitBackdropFilter:'blur(20px)', borderBottom:'1px solid var(--border)', position:'sticky', top:0, zIndex:50 }}>
         <div style={{ display:'flex', alignItems:'center', gap:10 }}>
-          <div style={{ width:30, height:30, borderRadius:9, background:'linear-gradient(135deg,var(--brand-dark),var(--brand-light))', display:'flex', alignItems:'center', justifyContent:'center', fontSize:15, fontWeight:900, color:'#fff' }}>E</div>
-          <span style={{ fontFamily:'var(--font-display)', fontSize:15, fontWeight:800 }}>Examaye</span>
+          <div style={{ width:30, height:30, borderRadius:9, background:'linear-gradient(135deg,var(--brand-dark),var(--brand-light))', display:'flex', alignItems:'center', justifyContent:'center', fontSize:15, fontWeight:900, color:'#fff' }}>S</div>
+          <span style={{ fontFamily:'var(--font-display)', fontSize:15, fontWeight:800 }}>StudyNavo</span>
           <span style={{ fontSize:11, padding:'2px 8px', borderRadius:'var(--r-full)', background:'var(--success-dim)', color:'var(--success)', fontWeight:700 }}>Practice Mode</span>
         </div>
         <ThemeToggle size="sm" />
@@ -328,7 +328,7 @@ function SetupScreen({ onStart }) {
           </div>
 
           {/* Instructions */}
-          <div style={{ ...cardS, border:'1px solid rgba(99,102,241,0.2)', background:'var(--brand-dim)' }}>
+          <div style={{ ...cardS, border:'1px solid rgba(79,110,247,0.2)', background:'var(--brand-dim)' }}>
             <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', cursor:'pointer' }} onClick={() => setShowInstr(s=>!s)}>
               <div style={{ fontSize:13, fontWeight:700, color:'var(--brand-light)' }}>📋 Instructions</div>
               <span style={{ color:'var(--brand-light)', transition:'transform var(--t-fast)', transform: showInstr ? 'rotate(180deg)' : 'none' }}>▼</span>

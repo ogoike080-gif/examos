@@ -1,7 +1,7 @@
 {
-  "name": "examos-2026",
+  "name": "studynavo",
   "version": "1.0.0",
-  "description": "Examaye — Nigeria's AI-Powered Examination Ecosystem",
+  "description": "StudyNavo — Nigeria's AI-Powered Examination Ecosystem",
   "private": true,
   "scripts": {
     "start": "npm install --omit=dev && node server/index.js",

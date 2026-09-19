@@ -79,9 +79,9 @@ export function InstallBanner() {
         display:'flex', alignItems:'center', justifyContent:'center',
         fontSize:20, fontWeight:900, color:'#fff',
         boxShadow:'0 4px 12px var(--brand-glow)',
-      }}>E</div>
+      }}>S</div>
       <div style={{ flex:1, minWidth:0 }}>
-        <div style={{ fontSize:13, fontWeight:700, marginBottom:2 }}>Install Examaye</div>
+        <div style={{ fontSize:13, fontWeight:700, marginBottom:2 }}>Install StudyNavo</div>
         <div style={{ fontSize:11, color:'var(--text-muted)' }}>Add to home screen for offline access</div>
       </div>
       <div style={{ display:'flex', gap:8, flexShrink:0 }}>

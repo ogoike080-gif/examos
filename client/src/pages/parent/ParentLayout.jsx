@@ -14,9 +14,9 @@ export default function ParentLayout() {
         backdropFilter: 'blur(12px)', position: 'sticky', top: 0, zIndex: 30,
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <div style={{ width: 30, height: 30, borderRadius: 8, background: 'linear-gradient(135deg,var(--brand-dark),var(--brand-light))', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 900, color: '#fff', fontSize: 14 }}>E</div>
+          <div style={{ width: 30, height: 30, borderRadius: 8, background: 'linear-gradient(135deg,var(--brand-dark),var(--brand-light))', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 900, color: '#fff', fontSize: 14 }}>S</div>
           <div>
-            <div style={{ fontWeight: 800, fontSize: 14 }}>Examaye</div>
+            <div style={{ fontWeight: 800, fontSize: 14 }}>StudyNavo</div>
             <div style={{ fontSize: 10.5, color: 'var(--text-muted)' }}>Parent Portal</div>
           </div>
         </div>

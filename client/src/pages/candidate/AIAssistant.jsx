@@ -16,7 +16,7 @@ function Message({ msg }) {
           background:'linear-gradient(135deg,var(--brand-dark),var(--brand-light))',
           display:'flex', alignItems:'center', justifyContent:'center',
           fontSize:13, fontWeight:900, color:'#fff',
-        }}>E</div>
+        }}>S</div>
       )}
       <div style={{
         maxWidth:'80%',
@@ -141,7 +141,7 @@ export default function AIAssistant({ isOpen, onClose }) {
 
           {loading && (
             <div style={{ display:'flex', gap:8, marginBottom:12 }}>
-              <div style={{ width:28, height:28, borderRadius:8, background:'linear-gradient(135deg,var(--brand-dark),var(--brand-light))', display:'flex', alignItems:'center', justifyContent:'center', fontSize:13, fontWeight:900, color:'#fff' }}>E</div>
+              <div style={{ width:28, height:28, borderRadius:8, background:'linear-gradient(135deg,var(--brand-dark),var(--brand-light))', display:'flex', alignItems:'center', justifyContent:'center', fontSize:13, fontWeight:900, color:'#fff' }}>S</div>
               <div style={{ padding:'10px 14px', background:'var(--bg-raised)', borderRadius:'4px 16px 16px 16px', border:'1px solid var(--border)' }}>
                 <div style={{ display:'flex', gap:4, alignItems:'center' }}>
                   {[0,1,2].map(i => (

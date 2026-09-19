@@ -45,8 +45,8 @@ export function XPRing({ xp = 0, size = 80 }) {
         />
         <defs>
           <linearGradient id="xpGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-            <stop offset="0%" stopColor="#6366F1"/>
-            <stop offset="100%" stopColor="#A78BFA"/>
+            <stop offset="0%" stopColor="#4F6EF7"/>
+            <stop offset="100%" stopColor="#7C93FA"/>
           </linearGradient>
         </defs>
       </svg>
@@ -69,7 +69,7 @@ export function BadgeCard({ badge, earned = false, earnedAt = null }) {
   return (
     <div style={{
       background:'var(--bg-surface)',
-      border:`1px solid ${earned ? 'rgba(99,102,241,0.3)' : 'var(--border)'}`,
+      border:`1px solid ${earned ? 'rgba(79,110,247,0.3)' : 'var(--border)'}`,
       borderRadius:'var(--r-xl)',
       padding:'16px',
       textAlign:'center',

@@ -9,7 +9,7 @@ function getGrade(pct) {
   if (pct >= 80) return { grade:'B2', color:'#22C55E' };
   if (pct >= 75) return { grade:'B3', color:'#4ADE80' };
   if (pct >= 70) return { grade:'C4', color:'#3B82F6' };
-  if (pct >= 65) return { grade:'C5', color:'#60A5FA' };
+  if (pct >= 65) return { grade:'C5', color:'#7C93FA' };
   if (pct >= 60) return { grade:'C6', color:'#93C5FD' };
   if (pct >= 55) return { grade:'D7', color:'#F59E0B' };
   if (pct >= 50) return { grade:'E8', color:'#FBBF24' };

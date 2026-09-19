@@ -37,9 +37,9 @@ export function CandidateLayout() {
         borderBottom:'1px solid var(--border)', position:'sticky', top:0, zIndex:50, flexShrink:0,
       }}>
         <div style={{ display:'flex', alignItems:'center', gap:10 }}>
-          <div style={{ width:30, height:30, borderRadius:9, background:'linear-gradient(135deg,var(--brand-dark),var(--brand-light))', display:'flex', alignItems:'center', justifyContent:'center', fontSize:15, fontWeight:900, color:'#fff', boxShadow:'0 2px 10px var(--brand-glow)' }}>E</div>
+          <div style={{ width:30, height:30, borderRadius:9, background:'linear-gradient(135deg,var(--brand-dark),var(--brand-light))', display:'flex', alignItems:'center', justifyContent:'center', fontSize:15, fontWeight:900, color:'#fff', boxShadow:'0 2px 10px var(--brand-glow)' }}>S</div>
           <div>
-            <div style={{ fontFamily:'var(--font-display)', fontSize:14, fontWeight:800, letterSpacing:'-0.02em', lineHeight:1 }}>Examaye</div>
+            <div style={{ fontFamily:'var(--font-display)', fontSize:14, fontWeight:800, letterSpacing:'-0.02em', lineHeight:1 }}>StudyNavo</div>
             <div style={{ fontSize:10, color:'var(--text-muted)' }}>Student Portal</div>
           </div>
         </div>
@@ -181,7 +181,7 @@ export function CandidateDashboard() {
             const info = getInfo(exam);
             return (
               <div key={exam.id} onClick={()=>info.actionTo&&navigate(info.actionTo)}
-                style={{ background:'var(--bg-surface)', border:`1px solid ${info.actionTo?'rgba(99,102,241,0.25)':'var(--border)'}`, borderRadius:'var(--r-xl)', padding:'16px 18px', display:'flex', alignItems:'center', gap:14, transition:'all var(--t-base)', cursor:info.actionTo?'pointer':'default', animation:`fadeInUp 0.4s ${i*0.05+0.15}s both` }}
+                style={{ background:'var(--bg-surface)', border:`1px solid ${info.actionTo?'rgba(79,110,247,0.25)':'var(--border)'}`, borderRadius:'var(--r-xl)', padding:'16px 18px', display:'flex', alignItems:'center', gap:14, transition:'all var(--t-base)', cursor:info.actionTo?'pointer':'default', animation:`fadeInUp 0.4s ${i*0.05+0.15}s both` }}
                 onMouseOver={e=>{if(info.actionTo){e.currentTarget.style.transform='translateY(-1px)';e.currentTarget.style.boxShadow='var(--shadow-md)';}}}
                 onMouseOut={e=>{e.currentTarget.style.transform='';e.currentTarget.style.boxShadow='';}}
               >
@@ -232,7 +232,7 @@ export function ResultsPage() {
   const examTotal = parseFloat(result.exam_total || 100);
   const passMark = parseFloat(result.pass_marks || examTotal * 0.5);
   const passed = pct >= (passMark / examTotal) * 100;
-  const themeColor = settings.result_color || '#6366F1';
+  const themeColor = settings.result_color || '#4F6EF7';
   const statusColor = passed ? 'var(--success)' : 'var(--danger)';
   const statusBg = passed ? 'var(--success-dim)' : 'var(--danger-dim)';
 
@@ -352,7 +352,7 @@ export function ResultsPage() {
       </div>
 
       <div style={{ textAlign:'center', fontSize:10, color:'var(--text-dim)', marginTop:12 }}>
-        REF: {sessionId?.slice(0,16).toUpperCase()} · This result is computer-generated and valid without signature. · Examaye
+        REF: {sessionId?.slice(0,16).toUpperCase()} · This result is computer-generated and valid without signature. · StudyNavo
       </div>
     </div>
   );

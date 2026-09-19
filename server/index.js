@@ -326,7 +326,7 @@ async function start() {
       // Show all network IPs on startup
       const os = require('os');
       const nets = os.networkInterfaces();
-      console.log(`🚀 Examaye Server running on port ${PORT}`);
+      console.log(`🚀 StudyNavo Server running on port ${PORT}`);
       console.log(`📡 Socket.io ready`);
       console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
       console.log(`\n📌 Student access URLs (share with students):`);

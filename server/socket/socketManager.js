@@ -129,7 +129,7 @@ function initSocket(io) {
       io.to(`exam-${exam_id}`).emit('exam-broadcast', {
         message,
         action,
-        from: 'Examaye Control',
+        from: 'StudyNavo Control',
         timestamp: new Date().toISOString(),
       });
     });
