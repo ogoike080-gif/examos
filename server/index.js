@@ -61,6 +61,13 @@ const { paystackWebhookHandler } = paymentsRoutes;
 // "Refused to apply style ... MIME type ('application/json')" in devtools,
 // with the page rendering as a blank white screen.
 const PRODUCTION_ORIGINS = [
+  // studynavo.com is the current domain — see Railway custom domain setup.
+  // examaye.com is kept temporarily during the migration so nothing breaks
+  // for anyone with the old URL bookmarked/cached; safe to delete these two
+  // lines once studynavo.com has been live and confirmed working for a
+  // while and examaye.com is fully retired.
+  'https://studynavo.com',
+  'https://www.studynavo.com',
   'https://examaye.com',
   'https://www.examaye.com',
 ];

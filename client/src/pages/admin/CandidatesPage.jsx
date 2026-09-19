@@ -36,6 +36,14 @@ export default function CandidatesPage() {
   const [assignCandidate, setAssignCandidate] = useState('');
   const [assigning, setAssigning] = useState(false);
 
+  // Device-reset state — see routes/candidates.js POST /reset-device.
+  // Separate from the roster above on purpose: this looks a candidate up
+  // by email, since a self-pay candidate (registered directly, or created
+  // by an anonymous checkout) never has a reg_number/class_name and never
+  // appears in the class roster at all.
+  const [resetEmail, setResetEmail] = useState('');
+  const [resetting, setResetting] = useState(false);
+
   // Edit modal
   const [editTarget, setEditTarget] = useState(null);
   const [editForm, setEditForm] = useState({ full_name:'', reg_number:'', class_name:'', staff_id:'' });
@@ -222,6 +230,21 @@ export default function CandidatesPage() {
     URL.revokeObjectURL(url);
   };
 
+  // ── Reset a locked-out candidate's device/session ──
+  const handleResetDevice = async () => {
+    if (!resetEmail.trim()) return;
+    setResetting(true);
+    try {
+      const res = await candidateAPI.resetDevice(resetEmail.trim());
+      toast.success(res.data.message || 'Device and session cleared');
+      setResetEmail('');
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Could not reset — check the email and try again');
+    } finally {
+      setResetting(false);
+    }
+  };
+
   return (
     <div style={{ padding:'28px 32px' }}>
 
@@ -238,6 +261,7 @@ export default function CandidatesPage() {
           <TabBtn id="register" label="Register"        icon="+" />
           <TabBtn id="import"   label="Import CSV"      icon="⬆" />
           <TabBtn id="assign"   label="Assign to Exam"  icon="📋" />
+          <TabBtn id="device"   label="Device Lock"     icon="🔒" />
         </div>
       </div>
 
@@ -469,6 +493,40 @@ export default function CandidatesPage() {
 
               <Button onClick={handleAssign} loading={assigning} disabled={!assignExam}>
                 {assignMode === 'class' ? 'Assign Entire Class' : 'Assign Student'} →
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── TAB: DEVICE LOCK ── */}
+      {tab === 'device' && (
+        <div style={{ maxWidth:600 }}>
+          <div style={{ ...cardS, padding:24 }}>
+            <div style={{ fontFamily:'var(--font-display)', fontSize:16, fontWeight:700, marginBottom:8 }}>
+              Reset a Candidate's Device Lock
+            </div>
+            <p style={{ fontSize:13, color:'var(--text-secondary)', lineHeight:1.6, marginBottom:20 }}>
+              A candidate account is locked to the one device it first registered, paid, or logged in
+              from. If they get a new phone, clear their browser data, or logged in from a second
+              device by mistake and got locked out of their own paid access, use this to clear the
+              lock — their <strong>next</strong> login, from whichever device they're actually using,
+              becomes the new permanent one. This only applies to individually-registered candidates
+              (self-pay signups or checkout accounts) — school-enrolled students in the roster above
+              aren't device-locked.
+            </p>
+            <label style={labelS}>Candidate's Email</label>
+            <div style={{ display:'flex', gap:10 }}>
+              <input
+                style={{ ...inputS, flex:1 }}
+                type="email"
+                placeholder="student@example.com"
+                value={resetEmail}
+                onChange={e => setResetEmail(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && handleResetDevice()}
+              />
+              <Button onClick={handleResetDevice} loading={resetting} disabled={!resetEmail.trim()}>
+                Reset Lock
               </Button>
             </div>
           </div>

@@ -291,4 +291,44 @@ router.delete('/:id/parents/:parentId', authenticate, authorize('superadmin','ad
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// POST /api/candidates/reset-device — clears bound_device_id and
+// current_session_id for a candidate account, found by email. Needed
+// because a candidate is permanently locked to whichever device first
+// registered, paid, or logged in on it (see middleware/auth.js
+// checkOrBindDevice) — a client-side id in localStorage, not a hardware
+// fingerprint. Anything that clears that id (a new phone, clearing
+// browser data, reinstalling) locks them out with no way back in on their
+// own. This is that way back in: an admin looks the account up by email
+// and wipes both locks, so their VERY NEXT login — from whichever device
+// they're actually using now — becomes the new permanent binding.
+// Deliberately email-based rather than tied to the school roster below,
+// since a self-pay candidate (registered directly, or created by an
+// anonymous checkout) never appears in that roster at all.
+router.post('/reset-device', authenticate, authorize('superadmin', 'admin'), async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email || !email.trim()) return res.status(400).json({ error: 'Email is required' });
+
+    const db = getDB();
+    const [rows] = await db.execute(
+      `SELECT id, email, full_name, role, bound_device_id, current_session_id FROM users WHERE email=?`,
+      [email.trim().toLowerCase()]
+    );
+    if (!rows[0]) return res.status(404).json({ error: 'No account found with that email' });
+    if (rows[0].role !== 'candidate') return res.status(400).json({ error: 'This tool is for candidate accounts only' });
+
+    await db.execute(
+      `UPDATE users SET bound_device_id=NULL, current_session_id=NULL WHERE id=?`,
+      [rows[0].id]
+    );
+
+    res.json({
+      success: true,
+      message: `Device and session cleared for ${rows[0].full_name || rows[0].email}. They can now log in fresh from any device — that login becomes their new bound device.`,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;

@@ -119,6 +119,7 @@ export const candidateAPI = {
   listParents: (candidateId) => axios.get(`${API}/candidates/${candidateId}/parents`),
   linkParent: (candidateId, data) => axios.post(`${API}/candidates/${candidateId}/link-parent`, data),
   unlinkParent: (candidateId, parentId) => axios.delete(`${API}/candidates/${candidateId}/parents/${parentId}`),
+  resetDevice: (email) => axios.post(`${API}/candidates/reset-device`, { email }),
 };
 
 // ── SUBJECTS ──────────────────────────────────────────────────
