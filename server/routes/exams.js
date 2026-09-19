@@ -567,6 +567,20 @@ router.post('/:id/start-session', authenticate, authorize('candidate'), async (r
     if (existing[0]?.status === 'submitted') return res.status(409).json({ error: 'You have already submitted this exam.' });
     if (existing[0]?.status === 'disqualified') return res.status(403).json({ error: 'You have been disqualified from this exam.' });
 
+    // Exams are roster-based, not open to any authenticated candidate — an
+    // admin explicitly assigns candidates via POST /api/candidates/assign-
+    // class or /:id/assign-exam, which pre-creates this exact row with
+    // status='waiting' (see routes/candidates.js). Without this check, any
+    // candidate account anywhere — including a self-pay signup with no
+    // connection to this exam's school at all — could start ANY exam in the
+    // system just by knowing or guessing its id, completely bypassing that
+    // assignment step (the "Create brand new session" code further below
+    // used to run unconditionally for anyone with no existing row, instead
+    // of only ever being reached for someone the roster already expects).
+    if (!existing[0]) {
+      return res.status(403).json({ error: 'You have not been assigned to this exam. Contact your school if you believe this is a mistake.' });
+    }
+
     const [rawQuestions] = await db.execute(
       `SELECT q.id, q.question_text, q.question_type, q.options, q.marks,
        CASE WHEN eq.marks_override IS NOT NULL THEN eq.marks_override ELSE q.marks END as final_marks
