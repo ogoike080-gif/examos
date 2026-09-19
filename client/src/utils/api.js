@@ -179,7 +179,7 @@ export const importBatchAPI = {
       timeout: 600000, // multi-pass pipeline (incl. Pass 5 re-verification) can take longer than the old flow
     });
   },
-  list: () => axios.get(`${API}/import/batches`),
+  list: (params = {}) => axios.get(`${API}/import/batches`, { params }),
   get: (id) => axios.get(`${API}/import/batches/${id}`),
   staged: (id, status) => axios.get(`${API}/import/batches/${id}/staged`, { params: status ? { status } : {} }),
   updateStaged: (id, stagedId, data) => axios.put(`${API}/import/batches/${id}/staged/${stagedId}`, data),

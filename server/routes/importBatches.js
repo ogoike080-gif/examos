@@ -575,17 +575,47 @@ async function recomputeBatchCounts(db, batchId) {
 }
 
 // GET /api/import/batches — list recent batches
+// GET /api/import/batches — list, newest first by default.
+//
+// Used to just be `ORDER BY created_at DESC LIMIT 100` with no way to see
+// anything older than the 100 most recent batches, or to narrow down to one
+// exam body/year/status out of however many are mixed together — which is
+// exactly the problem once a school has been importing for a while and the
+// list is mostly old, already-published batches burying the ones that still
+// need review. Now supports optional exam_body/year/status filters and real
+// pagination (page/limit), and reports total so the client can show
+// "Page 1 of 6" and a Next button instead of just cutting off at 100.
 router.get('/', authenticate, authorize('superadmin', 'admin', 'examiner'), async (req, res) => {
   try {
     const db = getDB();
+
+    const { exam_body, year, status } = req.query;
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(200, Math.max(1, parseInt(req.query.limit, 10) || 20));
+    const offset = (page - 1) * limit;
+
+    const where = [];
+    const params = [];
+    if (exam_body) { where.push('ib.exam_body = ?'); params.push(exam_body); }
+    if (year)      { where.push('ib.year = ?');      params.push(year); }
+    if (status)    { where.push('ib.status = ?');    params.push(status); }
+    const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+    const [[{ total }]] = await db.execute(
+      `SELECT COUNT(*) as total FROM import_batches ib ${whereClause}`,
+      params
+    );
+
     const [rows] = await db.execute(
       `SELECT ib.*, s.name as subject_name, u.full_name as created_by_name
        FROM import_batches ib
        LEFT JOIN subjects s ON ib.subject_id = s.id
        LEFT JOIN users u ON ib.created_by = u.id
-       ORDER BY ib.created_at DESC LIMIT 100`
+       ${whereClause}
+       ORDER BY ib.created_at DESC LIMIT ? OFFSET ?`,
+      [...params, limit, offset]
     );
-    res.json({ batches: rows });
+    res.json({ batches: rows, total, page, limit, total_pages: Math.max(1, Math.ceil(total / limit)) });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

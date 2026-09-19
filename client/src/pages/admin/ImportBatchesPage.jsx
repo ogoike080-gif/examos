@@ -117,6 +117,19 @@ export default function ImportBatchesPage() {
     paper_type: 'objective', expected_count: '',
   });
 
+  // Batch list filters + pagination — see routes/importBatches.js GET '/'.
+  // Page 1 (the default, no filters) is "recent batches"; picking an older
+  // page, or narrowing by exam body/year/status, is how you reach anything
+  // further back than the newest ones. filters is intentionally separate
+  // state from batchPage so changing a filter can reset back to page 1
+  // (see the onChange handlers below) without needing to reason about
+  // stale offsets from a previous filter's page count.
+  const [batchFilters, setBatchFilters] = useState({ exam_body: '', year: '', status: '' });
+  const [batchPage, setBatchPage] = useState(1);
+  const [batchTotalPages, setBatchTotalPages] = useState(1);
+  const [batchTotal, setBatchTotal] = useState(0);
+  const BATCH_PAGE_SIZE = 20;
+
   useEffect(() => {
     subjectAPI.list().then(r => setSubjects(r.data.subjects || [])).catch(() => {});
     loadExamBodies();
@@ -153,12 +166,35 @@ export default function ImportBatchesPage() {
     }
   };
 
-  const loadBatches = () => {
+  const loadBatches = (page = batchPage, filters = batchFilters) => {
     setLoading(true);
-    importBatchAPI.list()
-      .then(r => setBatches(r.data.batches || []))
+    const params = { page, limit: BATCH_PAGE_SIZE };
+    if (filters.exam_body) params.exam_body = filters.exam_body;
+    if (filters.year) params.year = filters.year;
+    if (filters.status) params.status = filters.status;
+    importBatchAPI.list(params)
+      .then(r => {
+        setBatches(r.data.batches || []);
+        setBatchTotalPages(r.data.total_pages || 1);
+        setBatchTotal(r.data.total || 0);
+        setBatchPage(r.data.page || page);
+      })
       .catch(() => toast.error('Could not load import batches'))
       .finally(() => setLoading(false));
+  };
+
+  // Changing any filter always jumps back to page 1 — an offset from a
+  // previous, differently-sized filtered list wouldn't mean anything under
+  // the new one.
+  const updateBatchFilter = (patch) => {
+    const next = { ...batchFilters, ...patch };
+    setBatchFilters(next);
+    loadBatches(1, next);
+  };
+
+  const goToBatchPage = (page) => {
+    if (page < 1 || page > batchTotalPages) return;
+    loadBatches(page, batchFilters);
   };
 
   const [editingBatch, setEditingBatch] = useState(null); // the batch object, or null when the edit modal is closed
@@ -367,7 +403,33 @@ export default function ImportBatchesPage() {
 
       {/* Batch list */}
       <div style={cardS}>
-        <label style={labelS}>Recent Batches</label>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10, marginBottom: 14 }}>
+          <label style={{ ...labelS, marginBottom: 0 }}>
+            {batchFilters.exam_body || batchFilters.year || batchFilters.status ? 'Filtered Batches' : 'Recent Batches'}
+            {batchTotal > 0 && <span style={{ textTransform: 'none', fontWeight: 400, color: 'var(--text-muted)' }}> — {batchTotal} total</span>}
+          </label>
+          {/* Narrows which batches show up, and resets to page 1 — the way
+              to reach an OLDER batch is either pick a specific exam
+              body/year/status here, or just page further back below with
+              no filter set at all. */}
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <select value={batchFilters.exam_body} onChange={e => updateBatchFilter({ exam_body: e.target.value })} style={{ ...inputS, width: 'auto', padding: '6px 10px', fontSize: 12.5 }}>
+              <option value="">All exam bodies</option>
+              {examBodies.map(b => <option key={b.id} value={b.code}>{b.name || b.code}</option>)}
+            </select>
+            <input type="number" placeholder="Any year" value={batchFilters.year} onChange={e => updateBatchFilter({ year: e.target.value })} style={{ ...inputS, width: 100, padding: '6px 10px', fontSize: 12.5 }} />
+            <select value={batchFilters.status} onChange={e => updateBatchFilter({ status: e.target.value })} style={{ ...inputS, width: 'auto', padding: '6px 10px', fontSize: 12.5 }}>
+              <option value="">Any status</option>
+              {Object.keys(STATUS_COLORS).map(st => <option key={st} value={st}>{st}</option>)}
+            </select>
+            {(batchFilters.exam_body || batchFilters.year || batchFilters.status) && (
+              <button onClick={() => updateBatchFilter({ exam_body: '', year: '', status: '' })}
+                style={{ background: 'var(--bg-raised)', border: '1px solid var(--border)', borderRadius: 'var(--r)', padding: '6px 10px', fontSize: 12.5, cursor: 'pointer', color: 'var(--text-secondary)' }}>
+                Clear filters
+              </button>
+            )}
+          </div>
+        </div>
         {loading ? (
           <p style={{ color: 'var(--text-muted)', fontSize: 14 }}>Loading…</p>
         ) : batches.length === 0 ? (
@@ -426,6 +488,21 @@ export default function ImportBatchesPage() {
                 })}
               </tbody>
             </table>
+          </div>
+        )}
+        {!loading && batchTotalPages > 1 && (
+          // Page 1 is "recent"; clicking Next walks backward through
+          // progressively older batches, same idea as the filters above.
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, marginTop: 16 }}>
+            <button onClick={() => goToBatchPage(batchPage - 1)} disabled={batchPage <= 1}
+              style={{ background: 'var(--bg-raised)', border: '1px solid var(--border)', borderRadius: 'var(--r)', padding: '6px 12px', fontSize: 12.5, cursor: batchPage <= 1 ? 'not-allowed' : 'pointer', color: batchPage <= 1 ? 'var(--text-muted)' : 'var(--text-secondary)' }}>
+              ← Newer
+            </button>
+            <span style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>Page {batchPage} of {batchTotalPages}</span>
+            <button onClick={() => goToBatchPage(batchPage + 1)} disabled={batchPage >= batchTotalPages}
+              style={{ background: 'var(--bg-raised)', border: '1px solid var(--border)', borderRadius: 'var(--r)', padding: '6px 12px', fontSize: 12.5, cursor: batchPage >= batchTotalPages ? 'not-allowed' : 'pointer', color: batchPage >= batchTotalPages ? 'var(--text-muted)' : 'var(--text-secondary)' }}>
+              Older →
+            </button>
           </div>
         )}
       </div>
