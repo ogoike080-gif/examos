@@ -4,7 +4,7 @@ const { v4: uuidv4 } = require('uuid');
 const axios = require('axios');
 const { getDB } = require('../models/db');
 const bcrypt = require('bcryptjs');
-const { authenticate, optionalAuthenticate, generateToken, startSession } = require('../middleware/auth');
+const { authenticate, optionalAuthenticate, generateToken, startSession, checkOrBindDevice } = require('../middleware/auth');
 const { grantExamUnlock, listUnlockedExamBodies } = require('../services/examAccess');
 
 const router = express.Router();
@@ -81,6 +81,13 @@ async function ensurePaymentsTables(db) {
     // rather than trusting anything fresh from the client at that point,
     // and so payment history/reporting can show what was actually bought.
     try { await db.execute(`ALTER TABLE payments ADD COLUMN exam_body VARCHAR(20) NULL`); } catch (e) {}
+    // The x-device-id the browser sent at /initialize time (see
+    // client/src/utils/deviceId.js) — carried through to finalizePayment so
+    // an anonymous checkout's brand-new account binds to the device that
+    // actually paid, not whatever device happens to call /verify (the
+    // webhook, in particular, is a server-to-server call with no browser
+    // headers at all, so it has to come from here instead).
+    try { await db.execute(`ALTER TABLE payments ADD COLUMN pending_device_id VARCHAR(128) NULL`); } catch (e) {}
   }
   await db.execute(`
     CREATE TABLE IF NOT EXISTS user_subscriptions (
@@ -127,6 +134,14 @@ async function finalizePayment(db, payment, paystackData) {
       'INSERT INTO users (id,email,password_hash,full_name,role) VALUES (?,?,?,?,?)',
       [userId, email.toLowerCase().trim(), hash, fullName, 'candidate']
     );
+
+    // Device lock (see middleware/auth.js checkOrBindDevice) — this account
+    // was just created, so bound_device_id is still NULL, meaning this
+    // always just binds it to whichever device just paid. That's exactly
+    // the intended behavior: the device someone paid from becomes their
+    // one permanent device for this account.
+    await checkOrBindDevice(db, { id: userId, role: 'candidate', bound_device_id: null }, payment.pending_device_id || null);
+
     // Single-active-session enforcement (see middleware/auth.js) applies
     // here too — this checkout-created account's first login is this
     // session, same as a normal /auth/login or /auth/register.
@@ -208,10 +223,15 @@ router.post('/initialize', optionalAuthenticate, async (req, res) => {
 
     const reference = `EXAMOS-${Date.now()}-${uuidv4().slice(0,8).toUpperCase()}`;
 
+    // Only recorded for an anonymous checkout (req.user is null) — an
+    // already-logged-in candidate paying again is already bound to their
+    // device from registration/first login, so there's nothing new to bind.
+    const deviceId = req.user ? null : (req.headers['x-device-id'] || null);
+
     await db.execute(
-      `INSERT INTO payments (id, user_id, pending_full_name, pending_email, reference, amount, plan_id, plan_name, exam_body, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
-      [uuidv4(), req.user ? req.user.id : null, req.user ? null : full_name.trim(), req.user ? null : email, reference, amount, planId, plan.name, examBody]
+      `INSERT INTO payments (id, user_id, pending_full_name, pending_email, pending_device_id, reference, amount, plan_id, plan_name, exam_body, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
+      [uuidv4(), req.user ? req.user.id : null, req.user ? null : full_name.trim(), req.user ? null : email, deviceId, reference, amount, planId, plan.name, examBody]
     );
 
     res.json({ reference, public_key: PAYSTACK_PUBLIC });

@@ -2,7 +2,7 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
 const { getDB } = require('../models/db');
-const { generateToken, authenticate, startSession } = require('../middleware/auth');
+const { generateToken, authenticate, startSession, checkOrBindDevice } = require('../middleware/auth');
 
 const router = express.Router();
 
@@ -162,11 +162,29 @@ router.post('/login', async (req, res) => {
       }
     }
 
+    // Device lock (see middleware/auth.js checkOrBindDevice): a candidate
+    // account only ever logs in from the one device it first registered,
+    // paid, or logged in from. Checked BEFORE starting a new session below —
+    // a rejected device never gets far enough to touch current_session_id,
+    // so it can't displace whatever device is already signed in either.
+    // Skipped for the hardcoded dev fallback admin, same as the session
+    // check below.
+    if (user.id && user.email !== 'admin@examos.com') {
+      const deviceId = req.headers['x-device-id'] || null;
+      const deviceCheck = await checkOrBindDevice(db, user, deviceId);
+      if (!deviceCheck.ok) {
+        return res.status(403).json({
+          error: 'This account is registered to another device. Log in from the device you used to sign up or pay, or contact support.',
+          code: 'DEVICE_MISMATCH',
+        });
+      }
+    }
+
     // Single-active-session enforcement (see middleware/auth.js): this
     // login becomes the ONLY valid session for this account from this
     // moment on. If the same surname/reg-number/staff-ID/email+password is
-    // already logged in somewhere else — another device, another
-    // browser, a friend helping out remotely — that session's next request
+    // already logged in somewhere else on the SAME bound device (e.g. two
+    // browser tabs, or after clearing a token), that session's next request
     // gets rejected with SESSION_SUPERSEDED. Skipped for the hardcoded dev
     // fallback admin (no real id/row to persist a session against).
     let sessionId;
@@ -243,6 +261,14 @@ router.post('/register', async (req, res) => {
         role
       ]
     );
+
+    // Device lock (see middleware/auth.js checkOrBindDevice) — a brand-new
+    // candidate account has no bound_device_id yet, so this always just
+    // binds it to whichever device is signing up right now, same as any
+    // other first login. role defaults to 'candidate' just above unless
+    // explicitly overridden, which matches checkOrBindDevice's own check.
+    const deviceId = req.headers['x-device-id'] || null;
+    await checkOrBindDevice(db, { id, role: role || 'candidate', bound_device_id: null }, deviceId);
 
     // Same single-active-session enforcement as /login (see
     // middleware/auth.js) — a fresh signup starts as this account's only

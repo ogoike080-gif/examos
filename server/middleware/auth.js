@@ -38,6 +38,49 @@ async function startSession(db, userId) {
   return sessionId;
 }
 
+// Ties a candidate account to the single device it first registered, paid,
+// or logged in from — stricter than startSession above, which just tracks
+// the MOST RECENT login and lets a new device silently kick an older one
+// out. This instead refuses a login from any device other than the bound
+// one outright: the new device never gets in, so the old one is never
+// displaced either. That's the actual point — a password alone, shared
+// with someone else, no longer gets them into the account from their own
+// device or laptop.
+//
+// Only enforced for role === 'candidate'. Staff (admin/examiner/proctor)
+// are exempt so ordinary office/home multi-device use isn't broken — they
+// still get the single-active-session behavior from startSession/
+// authenticate, just not this stricter device lock.
+//
+// deviceId is a client-generated id persisted in localStorage (see
+// client/src/utils/deviceId.js), sent as the x-device-id header. It is NOT
+// a hardware fingerprint — clearing browser storage or forging the header
+// would get around it. It stops the common case this was asked for (a
+// friend, sibling, or hired stand-in logging in from their own phone with
+// borrowed credentials), not a deliberately determined bypass.
+//
+// Returns { ok: true } and binds the device if this is the account's first
+// login/registration/payment (bound_device_id is still NULL) — this also
+// covers every account that existed before this feature shipped: its next
+// login just becomes the permanent binding, same as a brand-new signup.
+// Returns { ok: false } if the account is already bound to a different
+// device (or no device id was sent at all for an already-bound account).
+async function checkOrBindDevice(db, user, deviceId) {
+  if (user.role !== 'candidate') return { ok: true };
+
+  if (!user.bound_device_id) {
+    if (deviceId) {
+      await db.execute('UPDATE users SET bound_device_id=? WHERE id=?', [deviceId, user.id]);
+    }
+    return { ok: true };
+  }
+
+  if (!deviceId || deviceId !== user.bound_device_id) {
+    return { ok: false };
+  }
+  return { ok: true };
+}
+
 async function authenticate(req, res, next) {
   try {
     const authHeader = req.headers.authorization;
@@ -122,4 +165,4 @@ function authorize(...roles) {
   };
 }
 
-module.exports = { authenticate, optionalAuthenticate, authorize, generateToken, startSession, JWT_SECRET };
+module.exports = { authenticate, optionalAuthenticate, authorize, generateToken, startSession, checkOrBindDevice, JWT_SECRET };

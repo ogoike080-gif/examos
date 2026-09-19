@@ -7,12 +7,14 @@ import './styles/globals.css';
 
 import { ThemeProvider } from './components/ThemeProvider';
 import { getAnonId } from './utils/anonId';
+import { getDeviceId } from './utils/deviceId';
 
 // Sent on every request so the server can track free-trial quota for an
 // anonymous "Practice Free" visitor who hasn't logged in — harmless for
 // logged-in requests too, since the server only reads it when there's no
 // authenticated user attached to the request. See utils/anonId.js.
 axios.defaults.headers.common['x-anon-id'] = getAnonId();
+axios.defaults.headers.common['x-device-id'] = getDeviceId();
 
 
 // Set token on axios BEFORE anything renders

@@ -266,6 +266,20 @@ async function createSchema() {
     console.log('✅ current_session_id column added');
   } catch (e) { /* already exists — safe to ignore */ }
 
+  // Device binding — see middleware/auth.js checkOrBindDevice. A candidate
+  // account is tied to the single device it first registered, paid, or
+  // logged in from (a client-generated id in localStorage, sent as the
+  // x-device-id header — see client/src/utils/deviceId.js). NULL means
+  // "not bound yet"; the next login/register/payment from any device binds
+  // it permanently. This is separate from current_session_id above: that
+  // tracks the most recent login and lets a NEW device kick an old one out;
+  // this instead refuses the new device outright, so a shared password
+  // alone can no longer be used to sit an exam from a second device.
+  try {
+    await db.execute('ALTER TABLE users ADD COLUMN bound_device_id VARCHAR(128) NULL');
+    console.log('✅ bound_device_id column added');
+  } catch (e) { /* already exists — safe to ignore */ }
+
   // Add 'parent' role if upgrading from older version
   try {
     await db.execute(
