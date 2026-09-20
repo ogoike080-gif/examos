@@ -4,6 +4,20 @@ import axios from 'axios';
 import { io } from 'socket.io-client';
 
 const API = import.meta.env.VITE_API_URL || '/api';
+// The socket connection was hardcoded to http://localhost:5000 — harmless
+// only on the original developer's own machine in dev mode; every real
+// visitor's browser has nothing listening on their own localhost:5000, so
+// this silently failed to connect in production (Live Monitor, real-time
+// proctoring violations, etc. never worked for anyone but never loudly
+// errored either — socket.io just retries quietly in the background).
+// Derived from VITE_API_URL (stripping a trailing /api) so setting that one
+// env var — which a Capacitor/native build will need anyway, since there's
+// no same-origin server to default to — automatically fixes the socket
+// too, instead of needing a second env var kept in sync with it. Falls back
+// to the current page's own origin, which is exactly correct for today's
+// same-origin web deployment on Railway.
+const SOCKET_URL = import.meta.env.VITE_SOCKET_URL
+  || (import.meta.env.VITE_API_URL ? import.meta.env.VITE_API_URL.replace(/\/api\/?$/, '') : window.location.origin);
 let socket = null;
 
 // ── AUTH STORE ──────────────────────────────────────────────
@@ -51,7 +65,7 @@ export const useSocketStore = create((set, get) => ({
   connect: (token) => {
     if (socket?.connected) return socket;
 
- socket = io('http://localhost:5000', {
+ socket = io(SOCKET_URL, {
   auth: { token },
   transports: ['polling', 'websocket'],
   reconnection: true,

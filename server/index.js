@@ -86,6 +86,13 @@ function isAllowedOrigin(origin) {
     'http://127.0.0.1:3000',
     'http://localhost:5173',
     'http://127.0.0.1:5173',
+    // A Capacitor-wrapped native app (Android/iOS) serves its bundled web
+    // assets from one of these two fixed origins — neither is a real
+    // website, just how Capacitor's internal WebView identifies itself.
+    // Without these, every API/socket request from the native app gets
+    // silently CORS-blocked even though the request itself is fine.
+    'https://localhost',
+    'capacitor://localhost',
   ];
   if (allowed.includes(clean)) return true;
 
