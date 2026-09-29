@@ -9,6 +9,19 @@ const MODEL = 'gemini-3.1-flash-lite';
 const VISION_MODEL = 'gemini-3.5-flash';
 
 function extractJSON(text) {
+  // `text` is undefined whenever Gemini's response had no usable text part at
+  // all — most often because the response was blocked (safety/recitation/
+  // copyright filters) or hit some other non-STOP finish reason before
+  // producing content. Every caller of this function used to hand it
+  // response.text directly with no check, so this crashed as a bare
+  // "Cannot read properties of undefined (reading 'trim')" — a confusing
+  // internal error with no indication of what actually happened, surfaced
+  // straight to an admin trying to retry an import page. Failing with a
+  // clear, specific message here fixes it everywhere extractJSON is called,
+  // not just the one call site that happened to get reported.
+  if (!text) {
+    throw new Error('Gemini returned no content to parse — the response was likely blocked (safety filters, or a copyrighted/sensitive excerpt on this page) or came back empty.');
+  }
   const clean = text.trim().replace(/```json|```/g, '').trim();
   try {
     return JSON.parse(clean);
@@ -47,6 +60,26 @@ function extractJSON(text) {
     );
     return JSON.parse(repaired);
   }
+}
+
+// Checks a Gemini response for a non-STOP finish reason (blocked by safety
+// filters, recitation/copyright, or anything else that ends generation
+// early) BEFORE handing response.text to extractJSON — which otherwise has
+// no way to say anything more specific than "no content." A finishReason is
+// available here and worth surfacing: it's exactly what turns a bare
+// "Gemini returned no content" into something an admin can actually act on
+// ("this page was blocked by Gemini — most likely a copyrighted excerpt on
+// a Literature/English page — try cropping out the passage and retrying,
+// or type this page's questions in manually").
+// Mirrors the identical check already used in explainAnswer above.
+function checkResponseUsable(response, callerLabel) {
+  const finishReason = response.candidates?.[0]?.finishReason;
+  if (finishReason && finishReason !== 'STOP') {
+    throw new Error(
+      `Gemini blocked or cut off this page's response (${callerLabel}, finishReason=${finishReason}). This often happens on pages containing a literary excerpt, poem, or other copyrighted passage that Gemini's safety filters won't reproduce. Try cropping out the flagged passage and retrying, or type this page's questions in manually via "Add" under Missing Question Numbers.`
+    );
+  }
+  return response.text;
 }
 
 /**
@@ -209,7 +242,7 @@ Analyze this event and respond in JSON only (no markdown):
       model: MODEL,
       contents: prompt,
     });
-    return extractJSON(response.text);
+    return extractJSON(checkResponseUsable(response, 'analyzeProctoringEvent'));
   } catch (err) {
     console.error('AI proctor analysis error:', err);
     return {
@@ -261,7 +294,7 @@ Respond in JSON only (no markdown, no backticks):
     contents: prompt,
   });
 
-  const data = extractJSON(response.text);
+  const data = extractJSON(checkResponseUsable(response, 'generateQuestionsWithAI'));
   // Preserve $...$ LaTeX markup as-is — the frontend renders it with KaTeX
   // now (see MathText.jsx) rather than flattening it to a Unicode
   // approximation, which lost real math structure (fractions, matrices).
@@ -300,7 +333,7 @@ Grade this response fairly and respond in JSON only:
     contents: prompt,
   });
 
-  return extractJSON(response.text);
+  return extractJSON(checkResponseUsable(response, 'gradeEssayWithAI'));
 }
 
 /**
@@ -332,7 +365,7 @@ Provide a behavioral analysis in JSON only:
       model: MODEL,
       contents: prompt,
     });
-    return extractJSON(response.text);
+    return extractJSON(checkResponseUsable(response, 'analyzeSessionBehavior'));
   } catch (err) {
     return {
       overall_risk: 'medium',
@@ -444,7 +477,7 @@ Frequency: 6, 6, 12, 11, 10, 5
     }
   }
 
-  const parsed = extractJSON(response.text);
+  const parsed = extractJSON(checkResponseUsable(response, 'extractQuestionsFromImage'));
   // Preserve $...$ LaTeX markup as-is — MathText.jsx renders it with KaTeX on
   // the frontend now, so raw math notation from the model is exactly what we
   // want stored, not a flattened Unicode approximation.
@@ -560,7 +593,7 @@ Rules:
         },
       ],
     });
-    const verdict = extractJSON(response.text);
+    const verdict = extractJSON(checkResponseUsable(response, 'reverifyLowConfidenceQuestion'));
     // Preserve $...$ LaTeX markup as-is — see the note in extractQuestionsFromImage above.
     return verdict;
   } catch (err) {
@@ -621,7 +654,7 @@ Rules:
         },
       ],
     });
-    return extractJSON(response.text);
+    return extractJSON(checkResponseUsable(response, 'locateQuestionDiagram'));
   } catch (err) {
     const geminiErr = parseGeminiError(err);
     if (geminiErr.isQuotaExceeded) throw Object.assign(new Error(geminiErr.message), { isQuotaExceeded: true, retryDelaySeconds: geminiErr.retryDelaySeconds });
@@ -663,7 +696,7 @@ Keep each field factually careful — do not invent formulas, dates, or claims y
     model: MODEL,
     contents: [{ role: 'user', parts: [{ text: prompt }] }],
   });
-  return extractJSON(response.text);
+  return extractJSON(checkResponseUsable(response, 'generateTopicContent'));
 }
 
 /**
@@ -730,7 +763,7 @@ Rules:
     } else {
       response = await ai.models.generateContent({ model: MODEL, contents });
     }
-    const result = extractJSON(response.text);
+    const result = extractJSON(checkResponseUsable(response, 'solveObjectiveQuestion'));
     // Preserve $...$ LaTeX in solution_steps as-is — rendered with KaTeX.
     return result;
   } catch (err) {
@@ -939,7 +972,7 @@ Respond in JSON only (no markdown, no backticks):
         },
       ],
     });
-    const result = extractJSON(response.text);
+    const result = extractJSON(checkResponseUsable(response, 'reconstructDiagramSVG'));
     // Basic sanity check — don't hand back something that isn't even SVG-shaped.
     if (!result.svg || !result.svg.trim().startsWith('<svg')) {
       return { svg: null, elements_description: result.elements_description || null, confidence: 'low', error: 'Model did not return valid SVG markup' };
@@ -998,7 +1031,7 @@ Set "overall" to "fail" only if something would actually mislead or confuse a st
         },
       ],
     });
-    return extractJSON(response.text);
+    return extractJSON(checkResponseUsable(response, 'qualityCheckDiagram'));
   } catch (err) {
     console.error('qualityCheckDiagram failed:', err.message);
     return { checks: [], overall: 'fail', error: err.message };
