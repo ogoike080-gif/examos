@@ -1038,6 +1038,57 @@ Set "overall" to "fail" only if something would actually mislead or confuse a st
   }
 }
 
+// Classifies a batch of already-imported questions against the real
+// syllabus topics an admin has set up for this subject/examination (see
+// routes/syllabus.js) — this is what powers the "AI-Assign Topics" button
+// on the import review screen (routes/importBatches.js ai-assign-topics),
+// the batch equivalent of manually clicking "+ Topic" on each row one at a
+// time.
+//
+// Classifying questions one Gemini call each doesn't scale to a 50+
+// question batch, so this takes a whole chunk of questions plus the full
+// topic list in ONE call and asks for a JSON array mapping each question's
+// index to a topic NAME — not an id. Names, not ids, on purpose: an id is
+// meaningless to the model and a wrong-but-plausible-looking id would fail
+// silently, whereas a topic name it invents (hallucinated, misspelled, or
+// just not in the list) is something the caller can actually validate
+// against the real topic list before trusting it, and safely drop
+// otherwise. A question that genuinely doesn't fit any given topic well
+// should get topic: null rather than the model forcing a weak match — the
+// caller leaves those for manual assignment rather than mis-tagging them.
+async function classifyQuestionTopics({ items, topics, subject }) {
+  if (!items.length || !topics.length) return [];
+
+  const topicList = topics.map(t => `- ${t.name}`).join('\n');
+  const questionList = items.map(it => {
+    const optsText = (it.options || []).length
+      ? `\nOptions: ${it.options.join(' | ')}`
+      : '';
+    return `[${it.index}] ${it.question_text}${optsText}`;
+  }).join('\n\n');
+
+  const prompt = `You are tagging past exam questions${subject ? ` (subject: ${subject})` : ''} with the single syllabus topic each one is MOST about.
+
+Available topics (choose ONLY from this exact list — do not invent or rephrase a topic name):
+${topicList}
+
+Questions to tag:
+${questionList}
+
+Return ONLY a JSON array, one entry per question, in this exact shape:
+[{"index": 0, "topic": "<exact topic name from the list above>"}, ...]
+
+If a question genuinely doesn't fit any topic in the list well, use "topic": null for that one rather than forcing a weak match. Return nothing except the JSON array — no explanation, no markdown fences.`;
+
+  const response = await ai.models.generateContent({
+    model: MODEL,
+    contents: [{ role: 'user', parts: [{ text: prompt }] }],
+  });
+
+  const parsed = extractJSON(checkResponseUsable(response, 'classifyQuestionTopics'));
+  return Array.isArray(parsed) ? parsed : [];
+}
+
 module.exports = {
   analyzeProctoringEvent,
   generateQuestionsWithAI,
@@ -1052,6 +1103,7 @@ module.exports = {
   chatWithStudyAssistant,
   reconstructDiagramSVG,
   qualityCheckDiagram,
+  classifyQuestionTopics,
   parseGeminiError,
   EXPLANATION_BLOCKED_MARKER,
 };

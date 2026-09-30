@@ -193,6 +193,7 @@ export const importBatchAPI = {
   retryPage: (id, pageId) => axios.post(`${API}/import/batches/${id}/pages/${pageId}/retry`, {}, { timeout: 120000 }),
   fillMissing: (id, number, data) => axios.post(`${API}/import/batches/${id}/missing/${number}`, data),
   aiSolveMissing: (id) => axios.post(`${API}/import/batches/${id}/ai-solve-missing`, {}, { timeout: 300000 }),
+  aiAssignTopics: (id) => axios.post(`${API}/import/batches/${id}/ai-assign-topics`, {}, { timeout: 300000 }),
   reconstructDiagram: (id, stagedId) => axios.post(`${API}/import/batches/${id}/staged/${stagedId}/reconstruct-diagram`, {}, { timeout: 120000 }),
   qualityCheck: (id, stagedId) => axios.post(`${API}/import/batches/${id}/staged/${stagedId}/quality-check`, {}, { timeout: 60000 }),
 };

@@ -26,7 +26,7 @@ const AdmZip = require('adm-zip');
 const { v4: uuidv4 } = require('uuid');
 const { getDB } = require('../models/db');
 const { authenticate, authorize } = require('../middleware/auth');
-const { extractQuestionsFromImage, reverifyLowConfidenceQuestion, solveObjectiveQuestion, reconstructDiagramSVG, qualityCheckDiagram, parseGeminiError, generateQuestionsWithAI } = require('../ai/questionGenerator');
+const { extractQuestionsFromImage, reverifyLowConfidenceQuestion, solveObjectiveQuestion, reconstructDiagramSVG, qualityCheckDiagram, parseGeminiError, generateQuestionsWithAI, classifyQuestionTopics } = require('../ai/questionGenerator');
 const { computeConfidence } = require('../services/confidenceScoring');
 const { hasRealOptionContent } = require('../utils/answerQuality');
 
@@ -1080,6 +1080,103 @@ router.post('/:id/ai-solve-missing', authenticate, authorize('superadmin', 'admi
     res.json({ message: `AI-solved ${solved} of ${rows.length} unanswered question(s)`, solved, unsolved, attempted: rows.length });
   } catch (err) {
     console.error('ai-solve-missing error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/import/batches/:id/ai-assign-topics — tags every staged question
+// in this batch that doesn't already have a topic against the real syllabus
+// topics an admin has set up for this subject (see routes/syllabus.js). The
+// batch equivalent of clicking "+ Topic" on each row by hand — see
+// classifyQuestionTopics in ai/questionGenerator.js for how the matching
+// itself works and why it validates topic NAMES rather than trusting
+// AI-returned ids.
+router.post('/:id/ai-assign-topics', authenticate, authorize('superadmin', 'admin'), async (req, res) => {
+  try {
+    const db = getDB();
+
+    const [batchRows] = await db.execute('SELECT exam_body, subject_id FROM import_batches WHERE id=?', [req.params.id]);
+    const batch = batchRows[0];
+    if (!batch) return res.status(404).json({ error: 'Batch not found' });
+    if (!batch.exam_body || !batch.subject_id) {
+      return res.status(400).json({ error: 'This batch has no exam body or subject on record, so there is nothing to match topics against.' });
+    }
+
+    let subjectName = null;
+    const [s] = await db.execute('SELECT name FROM subjects WHERE id=?', [batch.subject_id]);
+    subjectName = s[0]?.name || null;
+
+    // The same exam-body → examination → syllabus-subject → topics chain
+    // the manual "+ Topic" picker walks through one dropdown at a time (see
+    // ImportBatchReviewPage.jsx openTopicPicker) — done here in one query
+    // instead, matched against this batch's own exam_body code and subject.
+    const [topics] = await db.execute(
+      `SELECT st.id, st.name
+       FROM syllabus_topics st
+       JOIN syllabus_subjects ss ON st.syllabus_subject_id = ss.id
+       JOIN examinations e ON ss.examination_id = e.id
+       JOIN exam_bodies eb ON e.exam_body_id = eb.id
+       WHERE eb.code = ? AND ss.linked_subject_id = ? AND st.is_active = TRUE
+       ORDER BY st.display_order, st.name`,
+      [batch.exam_body, batch.subject_id]
+    );
+    if (!topics.length) {
+      return res.status(400).json({
+        error: `No syllabus topics exist yet for ${subjectName || 'this subject'} under ${batch.exam_body}. Add some first in Exam Body Manager, then try again.`,
+      });
+    }
+
+    const [rows] = await db.execute(
+      `SELECT id, question_text, options FROM staged_questions
+       WHERE import_batch_id=? AND topic_id IS NULL
+       AND review_status NOT IN ('rejected','duplicate')`,
+      [req.params.id]
+    );
+    if (!rows.length) return res.json({ message: 'Every question in this batch already has a topic assigned', assigned: 0, unmatched: 0, attempted: 0 });
+
+    const topicByName = new Map(topics.map(t => [t.name.trim().toLowerCase(), t.id]));
+    let assigned = 0, unmatched = 0;
+
+    // Chunked rather than one call per question — a 50-question batch would
+    // otherwise mean 50 separate Gemini round-trips for something the model
+    // can do just as well, far faster, given the whole list at once.
+    const CHUNK_SIZE = 15;
+    for (let i = 0; i < rows.length; i += CHUNK_SIZE) {
+      const chunk = rows.slice(i, i + CHUNK_SIZE);
+      const items = chunk.map((row, idx) => {
+        let options;
+        try { options = Array.isArray(row.options) ? row.options : JSON.parse(row.options || '[]'); } catch { options = []; }
+        return { index: idx, question_text: row.question_text, options };
+      });
+
+      let results;
+      try {
+        results = await classifyQuestionTopics({ items, topics, subject: subjectName });
+      } catch (chunkErr) {
+        console.error('ai-assign-topics chunk failed:', chunkErr.message);
+        unmatched += chunk.length;
+        continue; // one bad chunk shouldn't sink the whole batch's progress
+      }
+
+      for (const r of results) {
+        const row = chunk[r.index];
+        if (!row) continue;
+        const topicId = r.topic ? topicByName.get(String(r.topic).trim().toLowerCase()) : null;
+        if (topicId) {
+          await db.execute('UPDATE staged_questions SET topic_id=? WHERE id=?', [topicId, row.id]);
+          assigned++;
+        } else {
+          unmatched++;
+        }
+      }
+    }
+
+    res.json({
+      message: `Tagged ${assigned} of ${rows.length} question(s) with a topic${unmatched ? ` — ${unmatched} didn't clearly match any listed topic and were left for manual assignment` : ''}.`,
+      assigned, unmatched, attempted: rows.length,
+    });
+  } catch (err) {
+    console.error('ai-assign-topics error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });

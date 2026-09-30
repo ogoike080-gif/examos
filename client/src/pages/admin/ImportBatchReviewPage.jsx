@@ -115,6 +115,7 @@ export default function ImportBatchReviewPage() {
   const [pickExam, setPickExam] = useState('');
   const [pickSubject, setPickSubject] = useState('');
   const [solvingMissing, setSolvingMissing] = useState(false);
+  const [assigningTopics, setAssigningTopics] = useState(false);
 
   // Quality checklist state — keyed by rowId, holds the last-run result
   // (also persisted server-side so it survives a page reload).
@@ -193,6 +194,19 @@ export default function ImportBatchReviewPage() {
       toast.error(err.response?.data?.error || 'AI-solve failed');
     } finally {
       setSolvingMissing(false);
+    }
+  };
+
+  const assignTopicsWithAI = async () => {
+    setAssigningTopics(true);
+    try {
+      const res = await importBatchAPI.aiAssignTopics(id);
+      toast.success(res.data.message);
+      load();
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'AI topic assignment failed');
+    } finally {
+      setAssigningTopics(false);
     }
   };
 
@@ -382,6 +396,18 @@ export default function ImportBatchReviewPage() {
             }}
           >
             {solvingMissing ? 'Solving…' : '✨ AI-Solve Missing Answers'}
+          </button>
+          <button
+            onClick={assignTopicsWithAI}
+            disabled={assigningTopics}
+            title="Tags every question in this batch that doesn't already have a topic, matched against the real syllabus topics set up for this subject in Exam Body Manager"
+            style={{
+              padding: '10px 16px', borderRadius: 'var(--r-lg)', border: '1.5px solid var(--border-md)',
+              background: assigningTopics ? 'var(--bg-raised)' : 'var(--bg-surface)', color: 'var(--text-secondary)',
+              fontWeight: 700, fontSize: 14, cursor: assigningTopics ? 'not-allowed' : 'pointer',
+            }}
+          >
+            {assigningTopics ? 'Tagging…' : '🏷️ AI-Assign Topics'}
           </button>
           <button
             onClick={publish}
