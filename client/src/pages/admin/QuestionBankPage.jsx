@@ -267,12 +267,23 @@ export default function QuestionBankPage() {
   const runAnswerFix = async () => {
     setAnswerFixing(true);
     let totalFixed = 0;
+    let totalUnsolvable = 0;
+    // Every id the server told us it couldn't solve this run, so the next
+    // round's query excludes them — without this, a genuinely-unsolvable
+    // question never gets its correct_answers set, so it never leaves the
+    // server's WHERE clause, and with no ordering could occupy the LIMIT
+    // window every round and stop the loop from ever reaching other,
+    // solvable questions sitting further down the table. See the matching
+    // exclude_ids handling in routes/questions.js.
+    let excludeIds = [];
     try {
       // eslint-disable-next-line no-constant-condition
       while (true) {
-        const res = await questionAPI.backfillCorrectAnswers({ limit: 15 });
-        const { fixed, remaining, quota_exceeded, retry_delay_seconds } = res.data;
+        const res = await questionAPI.backfillCorrectAnswers({ limit: 15, exclude_ids: excludeIds });
+        const { fixed, unsolvable, failed_ids, remaining, quota_exceeded, retry_delay_seconds } = res.data;
         totalFixed += fixed;
+        totalUnsolvable += unsolvable || 0;
+        excludeIds = excludeIds.concat(failed_ids || []);
         setAnswerFixProgress({ fixed: totalFixed, remaining });
 
         if (quota_exceeded) {
@@ -286,13 +297,13 @@ export default function QuestionBankPage() {
           toast.success(`Done — every question now has a recorded correct answer (${totalFixed} fixed this run).`);
           break;
         }
-        if (fixed === 0) {
-          // Nothing fixed and not quota-exceeded — every remaining question
-          // in this set is genuinely unsolvable from text alone (ambiguous,
-          // needs a diagram, or the AI's own working never matched any of
-          // the given options). Stop rather than looping on the same set
-          // forever; these need a human to fix manually in Question Bank.
-          toast(`Stopped — ${remaining} question(s) couldn't be solved automatically (likely need a diagram, or are ambiguous). Fix those manually in Question Bank.`, { icon: '⚠️', duration: 8000 });
+        // Nothing left to even attempt — not "nothing fixed this round",
+        // which used to stop here even when there was still unexcluded work
+        // (a solvable question sitting behind a cluster of unsolvable ones).
+        // A truly empty round, with exclude_ids already covering everything
+        // tried so far, means the unexcluded pool is actually exhausted.
+        if (fixed + (failed_ids?.length || 0) === 0) {
+          toast(`Stopped — ${totalUnsolvable ? `${totalUnsolvable} question(s)` : 'the rest'} couldn't be solved automatically (likely need a diagram, or are ambiguous). Fix those manually in Question Bank. (${remaining} still missing an answer in total.)`, { icon: '⚠️', duration: 8000 });
           break;
         }
       }
@@ -312,12 +323,23 @@ export default function QuestionBankPage() {
   const runBackfill = async () => {
     setBackfilling(true);
     let totalGenerated = 0;
+    let totalNeedsAnswer = 0;
+    let totalBadOptions = 0;
+    // Same reasoning as runAnswerFix's excludeIds above — a question with no
+    // correct answer never gets its explanation set, so without this it
+    // never leaves the server's WHERE clause and could block the loop from
+    // ever reaching other, genuinely-fixable questions further down the
+    // table. See the matching exclude_ids handling in routes/questions.js.
+    let excludeIds = [];
     try {
       // eslint-disable-next-line no-constant-condition
       while (true) {
-        const res = await questionAPI.backfillExplanations({ limit: 15 });
-        const { generated, remaining, quota_exceeded, retry_delay_seconds } = res.data;
+        const res = await questionAPI.backfillExplanations({ limit: 15, exclude_ids: excludeIds });
+        const { generated, needs_answer, bad_options, failed_ids, remaining, quota_exceeded, retry_delay_seconds } = res.data;
         totalGenerated += generated;
+        totalNeedsAnswer += needs_answer || 0;
+        totalBadOptions += bad_options || 0;
+        excludeIds = excludeIds.concat(failed_ids || []);
         setBackfillProgress({ generated: totalGenerated, remaining });
 
         if (quota_exceeded) {
@@ -331,12 +353,18 @@ export default function QuestionBankPage() {
           toast.success(`Done — every question now has an explanation (${totalGenerated} generated this run).`);
           break;
         }
-        if (generated === 0) {
-          // Nothing generated and not quota-exceeded — every remaining
-          // question in this set has no recorded correct answer to explain
-          // from (run "Fix Missing Correct Answers" first) or its options
-          // weren't properly extracted. Stop rather than looping forever.
-          toast(`Stopped — ${remaining} question(s) couldn't get an explanation (likely missing a correct answer, or options weren't properly extracted). Try "Fix Missing Correct Answers" first.`, { icon: '⚠️', duration: 8000 });
+        // Nothing left to even attempt, not just "nothing generated this
+        // round" — see the identical reasoning in runAnswerFix above. Build
+        // an ACCURATE breakdown here: "Fix Missing Correct Answers" only
+        // ever helps the needs_answer subset — it explicitly excludes
+        // questions with corrupted/missing options (see that route's own
+        // comment), so telling the admin to run it for the bad_options
+        // subset just sends them in a circle.
+        if (generated + (failed_ids?.length || 0) === 0) {
+          const parts = [];
+          if (totalNeedsAnswer > 0) parts.push(`${totalNeedsAnswer} need a correct answer first — run "Fix Missing Correct Answers"`);
+          if (totalBadOptions > 0) parts.push(`${totalBadOptions} have corrupted or missing options that tool can't fix either — these need manual editing (see the "Flagged Options" list)`);
+          toast(`Stopped — ${remaining} question(s) couldn't get an explanation: ${parts.join('; ')}.`, { icon: '⚠️', duration: 10000 });
           break;
         }
       }

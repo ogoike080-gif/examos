@@ -624,6 +624,17 @@ router.post('/backfill-explanations', authenticate, async (req, res) => {
     const db = getDB();
     const limit = Math.max(1, Math.min(50, Number(req.body?.limit) || 15));
     const { subject_id, exam_type, ids } = req.body || {};
+    // IDs the client already saw fail in THIS run (see QuestionBankPage.jsx
+    // runBackfill) — without this, a question with corrupted options never
+    // gets its explanation set, so it never leaves the WHERE clause below
+    // and would be re-fetched every single round. With no ORDER BY, MySQL
+    // returns the same rows in the same order for an unchanged query, so a
+    // large-enough cluster of permanently-stuck rows could occupy the LIMIT
+    // window forever and starve out genuinely-fixable questions sitting
+    // further down the table — not just a confusing message, an actual
+    // stuck loop. Excluding known-bad ids each round guarantees the loop
+    // always either makes progress or exhausts the fixable pool.
+    const excludeIds = Array.isArray(req.body?.exclude_ids) ? req.body.exclude_ids : [];
 
     // Broaden the SQL fetch beyond a strict empty check to also catch the
     // isBareAnswerLetter placeholder pattern ("A", "Option A", "The answer is
@@ -641,6 +652,10 @@ router.post('/backfill-explanations', authenticate, async (req, res) => {
       where += ` AND q.id IN (${ids.map(() => '?').join(',')})`;
       params.push(...ids);
     }
+    if (excludeIds.length) {
+      where += ` AND q.id NOT IN (${excludeIds.map(() => '?').join(',')})`;
+      params.push(...excludeIds);
+    }
 
     // Overfetch a little beyond `limit` before the precise JS filter below,
     // since the broadened SQL condition above can match some short-but-real
@@ -650,7 +665,7 @@ router.post('/backfill-explanations', authenticate, async (req, res) => {
     const [candidateRows] = await db.execute(
       `SELECT q.id, q.question_text, q.question_type, q.options, q.correct_answers, q.explanation, s.name AS subject_name
        FROM questions q LEFT JOIN subjects s ON q.subject_id = s.id
-       WHERE ${where} LIMIT ${limit * 4}`,
+       WHERE ${where} ORDER BY q.id LIMIT ${limit * 4}`,
       params
     );
     const rows = candidateRows
@@ -662,22 +677,36 @@ router.post('/backfill-explanations', authenticate, async (req, res) => {
     // over-counts — it also matches short-but-genuine explanations that
     // isBareAnswerLetter correctly rules back out). Capped at 2000 candidates
     // — this only needs to be "accurate enough for a progress indicator", not
-    // exact against an unbounded table, and the loop terminates correctly
-    // either way via the generated===0 stop condition below.
+    // exact against an unbounded table. Deliberately does NOT apply the
+    // exclude_ids filter — this is the true total still missing an
+    // explanation, permanently-stuck ones included, since hiding those from
+    // the count would make the problem look solved when it isn't.
     const countRemaining = async () => {
       const [candidates] = await db.execute(
-        `SELECT q.explanation FROM questions q WHERE ${where} LIMIT 2000`, params
+        `SELECT q.explanation FROM questions q WHERE ${where.replace(/ AND q\.id NOT IN \([^)]*\)/, '')} LIMIT 2000`,
+        params.slice(0, params.length - excludeIds.length)
       );
       return candidates.filter(q => !q.explanation || isBareAnswerLetter(q.explanation)).length;
     };
 
-    let generated = 0, failed = 0;
+    let generated = 0, needsAnswer = 0, badOptions = 0;
+    const failedIds = [];
     for (const question of rows) {
       let options, correct_answers;
       try { options = Array.isArray(question.options) ? question.options : JSON.parse(question.options || '[]'); } catch { options = []; }
       correct_answers = parseAnswerList(question.correct_answers);
 
-      if (!correct_answers.length && question.question_type !== 'essay') { failed++; continue; }
+      if (!correct_answers.length && question.question_type !== 'essay') {
+        // Two genuinely different reasons for "no recorded answer", and
+        // only one of them is what "Fix Missing Correct Answers" can help
+        // with — see the comment on that route for why it explicitly
+        // excludes questions with under 2 real options. Telling an admin to
+        // run that tool for a bad-options question sends them in a circle.
+        if (!hasRealOptionContent(question.options)) badOptions++;
+        else needsAnswer++;
+        failedIds.push(question.id);
+        continue;
+      }
 
       try {
         const explanation = await explainAnswer({
@@ -695,15 +724,15 @@ router.post('/backfill-explanations', authenticate, async (req, res) => {
           // any future call today) will fail the same way. Report what's
           // left so the caller knows to stop looping and try again later.
           const remaining = await countRemaining();
-          return res.json({ generated, failed, remaining, quota_exceeded: true, retry_delay_seconds: geminiErr.retryDelaySeconds || null });
+          return res.json({ generated, needs_answer: needsAnswer, bad_options: badOptions, failed_ids: failedIds, remaining, quota_exceeded: true, retry_delay_seconds: geminiErr.retryDelaySeconds || null });
         }
         console.error(`backfill-explanations: failed on question ${question.id}:`, err.message);
-        failed++;
+        failedIds.push(question.id);
       }
     }
 
     const remaining = await countRemaining();
-    res.json({ generated, failed, remaining, quota_exceeded: false });
+    res.json({ generated, needs_answer: needsAnswer, bad_options: badOptions, failed_ids: failedIds, remaining, quota_exceeded: false });
   } catch (err) {
     console.error('POST /questions/backfill-explanations error:', err.message);
     res.status(500).json({ error: err.message });
@@ -794,11 +823,23 @@ router.post('/backfill-correct-answers', authenticate, authorize('superadmin', '
       where += ` AND q.id IN (${ids.map(() => '?').join(',')})`;
       params.push(...ids);
     }
+    // Same reasoning as the identical exclude_ids handling in
+    // backfill-explanations above: a question Gemini genuinely can't solve
+    // (ambiguous, needs a diagram not present, etc.) never gets its
+    // correct_answers set, so without this it never leaves this WHERE
+    // clause and -- with no ORDER BY -- could occupy the LIMIT window every
+    // round, starving out other, easier questions sitting further down the
+    // table that were never actually tried.
+    const excludeIds = Array.isArray(req.body?.exclude_ids) ? req.body.exclude_ids : [];
+    if (excludeIds.length) {
+      where += ` AND q.id NOT IN (${excludeIds.map(() => '?').join(',')})`;
+      params.push(...excludeIds);
+    }
 
     const [rows] = await db.execute(
       `SELECT q.id, q.question_text, q.question_type, q.options, q.media_url, s.name AS subject_name
        FROM questions q LEFT JOIN subjects s ON q.subject_id = s.id
-       WHERE ${where} LIMIT ${limit}`,
+       WHERE ${where} ORDER BY q.id LIMIT ${limit}`,
       params
     );
 
@@ -824,15 +865,22 @@ router.post('/backfill-correct-answers', authenticate, authorize('superadmin', '
     };
 
     const countRemaining = async () => {
-      const [[{ cnt }]] = await db.execute(`SELECT COUNT(*) as cnt FROM questions q WHERE ${where}`, params);
+      // Honest total, permanently-unsolvable ones included — strips the
+      // exclude_ids clause the same way backfill-explanations' countRemaining
+      // does, so this number reflects everything still needing a correct
+      // answer, not just what's left in the not-yet-tried pool.
+      const cleanWhere = where.replace(/ AND q\.id NOT IN \([^)]*\)/, '');
+      const cleanParams = params.slice(0, params.length - excludeIds.length);
+      const [[{ cnt }]] = await db.execute(`SELECT COUNT(*) as cnt FROM questions q WHERE ${cleanWhere}`, cleanParams);
       return cnt;
     };
 
     let fixed = 0, unsolvable = 0;
+    const failedIds = [];
     for (const question of rows) {
       let options;
       try { options = Array.isArray(question.options) ? question.options : JSON.parse(question.options || '[]'); } catch { options = []; }
-      if (options.length < 2) { unsolvable++; continue; }
+      if (options.length < 2) { unsolvable++; failedIds.push(question.id); continue; }
 
       try {
         const diagram = readDiagramImage(question.media_url);
@@ -865,25 +913,26 @@ router.post('/backfill-correct-answers', authenticate, authorize('superadmin', '
             );
           }
           fixed++;
-        } else {
           // Genuinely unsolvable (ambiguous, needs a diagram not in the text,
-          // none of the options matched the model's own working) â leave it
+          // none of the options matched the model's own working) -- leave it
           // for a human to fix manually rather than guessing.
           unsolvable++;
+          failedIds.push(question.id);
         }
       } catch (err) {
         const geminiErr = parseGeminiError(err);
         if (geminiErr.isQuotaExceeded) {
           const remaining = await countRemaining();
-          return res.json({ fixed, unsolvable, remaining, quota_exceeded: true, retry_delay_seconds: geminiErr.retryDelaySeconds || null });
+          return res.json({ fixed, unsolvable, failed_ids: failedIds, remaining, quota_exceeded: true, retry_delay_seconds: geminiErr.retryDelaySeconds || null });
         }
         console.error(`backfill-correct-answers: failed on question ${question.id}:`, err.message);
         unsolvable++;
+        failedIds.push(question.id);
       }
     }
 
     const remaining = await countRemaining();
-    res.json({ fixed, unsolvable, remaining, quota_exceeded: false });
+    res.json({ fixed, unsolvable, failed_ids: failedIds, remaining, quota_exceeded: false });
   } catch (err) {
     console.error('POST /questions/backfill-correct-answers error:', err.message);
     res.status(500).json({ error: err.message });
